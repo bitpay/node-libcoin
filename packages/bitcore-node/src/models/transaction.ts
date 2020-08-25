@@ -52,7 +52,7 @@ export interface MintOp {
         mintHeight: number;
         coinbase: boolean;
         value: number;
-        script: Buffer;
+        lockingBytecode: string;
         spentTxid?: string;
         spentHeight?: SpentHeightIndicators;
         wallets?: Array<ObjectID>;
@@ -518,7 +518,7 @@ export class TransactionModel extends BaseTransaction<IBtcTransaction> {
                 mintHeight: height,
                 coinbase: isCoinbase,
                 value: output.satoshis,
-                script: output.script && output.script.toBuffer()
+                lockingBytecode: output.script && output.script.toHex()
               },
               $setOnInsert: {
                 spentHeight: SpentHeightIndicators.unspent,
