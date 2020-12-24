@@ -17,6 +17,12 @@ var oldCredentials = require('./legacyCredentialsExports');
 
 var CWC = require('crypto-wallet-core');
 
+
+const checkBig = function(x,y) {
+  x.toString().should.be.equal(y.toString());
+};
+
+
 var Bitcore = CWC.BitcoreLib;
 var Bitcore_ = {
   btc: Bitcore,
@@ -95,12 +101,12 @@ helpers.generateUtxos = (scriptType, publicKeyRing, path, requiredSignatures, am
         scriptPubKey = new Bitcore.Script.buildPublicKeyHashOut(address.address);
         break;
     }
-    should.exist(scriptPubKey);
+    should.exist(scriptPubKey, "scriptPubKey is null");
 
     var obj = {
       txid: new Bitcore.crypto.Hash.sha256(Buffer.alloc(i)).toString('hex'),
       vout: 100,
-      satoshis: helpers.toSatoshi(amount),
+      satoshis: BigInt(helpers.toSatoshi(amount)),
       scriptPubKey: scriptPubKey.toBuffer().toString('hex'),
       address: address.address,
       path: path,
@@ -148,7 +154,7 @@ helpers.createAndJoinWallet = (clients, keys, m, n, opts, cb) => {
     },
     (err, secret) => {
       if (err) console.log(err);
-      should.not.exist(err);
+      should.not.exist(err,err);
 
       if (n > 1) {
         should.exist(secret);
@@ -193,7 +199,7 @@ helpers.createAndJoinWallet = (clients, keys, m, n, opts, cb) => {
           }
         ],
         err => {
-          should.not.exist(err);
+          should.not.exist(err,err);
           return cb({
             m: m,
             n: n,
@@ -209,7 +215,7 @@ helpers.tamperResponse = (clients, method, url, args, tamper, cb) => {
   clients = [].concat(clients);
   // Use first client to get a clean response from server
   clients[0].request.doRequest(method, url, args, false, (err, result) => {
-    should.not.exist(err);
+    should.not.exist(err,err);
     tamper(result);
     // Return tampered data for every client in the list
     _.each(clients, client => {
@@ -262,6 +268,7 @@ blockchainExplorerMock.getAddressUtxos = (address, height, cb) => {
 };
 
 blockchainExplorerMock.setUtxo = (address, amount, m, confirmations) => {
+  $.checkArgument(address.coin == 'btc' || address.coin == 'bch', 'Can not call setUtxo for '+ address.coin);
   var B = Bitcore_[address.coin];
   var scriptPubKey;
   switch (address.type) {
@@ -385,12 +392,20 @@ blockchainExplorerMock.estimateGas = (nbBlocks, cb) => {
   return cb(null, '20000000000');
 };
 
+const BALANCE_DFLT = {
+    unconfirmed: BigInt(0),
+    confirmed: BigInt(20000000000 * 5),
+    balance: BigInt(20000000000 * 5),
+};
+
+let balance;
+
+blockchainExplorerMock.setBalance = (balance_in) => {
+  balance = balance_in;
+};
+
 blockchainExplorerMock.getBalance = (nbBlocks, cb) => {
-  return cb(null, {
-    unconfirmed: 0,
-    confirmed: 20000000000 * 5,
-    balance: 20000000000 * 5
-  });
+  return cb(null, balance); 
 };
 
 blockchainExplorerMock.getTransactionCount = (addr, cb) => {
@@ -436,6 +451,7 @@ describe('client API', function() {
 
   beforeEach(done => {
     var expressApp = new ExpressApp();
+
     expressApp.start(
       {
         ignoreRateLimiter: true,
@@ -453,6 +469,7 @@ describe('client API', function() {
         });
         blockchainExplorerMock.reset();
         sandbox = sinon.createSandbox();
+        balance = BALANCE_DFLT;
 
         if (!process.env.BWC_SHOW_LOGS) {
           sandbox.stub(log, 'warn');
@@ -954,6 +971,48 @@ describe('client API', function() {
           '0xeb068504a817c80082520894a062a07a0a56beb2872b12f388f511d694626730870dd764300b800080018080'
         ]);
       });
+      it('should build an eth BIG INT txp correctly', () => {
+        const toAddress = '0xa062a07a0a56beb2872b12f388f511d694626730';
+        const key = new Key({ seedData: masterPrivateKey, seedType: 'extendedPrivateKey' });
+        const path = "m/44'/60'/0'";
+        const publicKeyRing = [
+          {
+            xPubKey: new Bitcore.HDPrivateKey(masterPrivateKey).deriveChild(path).toString()
+          }
+        ];
+
+        const from = Utils.deriveAddress('P2PKH', publicKeyRing, 'm/0/0', 1, 'livenet', 'eth');
+
+        const txp = {
+          version: 3,
+          from: from.address,
+          coin: 'eth',
+          outputs: [
+            {
+              toAddress: toAddress,
+              amount: 3896000000000000000000n,
+              gasLimit: 21000,
+              message: 'first output'
+            }
+          ],
+          requiredSignatures: 1,
+          outputOrder: [0, 1, 2],
+          fee: 420000000000000,
+          nonce: 6,
+          gasPrice: 20000000000,
+          derivationStrategy: 'BIP44',
+          addressType: 'P2PKH',
+          amount: 3896000000000000000000n,
+        };
+        var t = Utils.buildTx(txp);
+        const rawTxp = t.uncheckedSerialize();
+
+        // checked with https://www.ethereumdecoder.com/
+        rawTxp.should.deep.equal([
+          '0xed068504a817c80082520894a062a07a0a56beb2872b12f388f511d69462673089d333dc7e1b79e0000080018080'
+        ]);
+      });
+ 
       it('should protect from creating excessive fee', () => {
         var toAddress = 'msj42CCGruhRsFrGATiUuh25dtxYtnpbTx';
         var changeAddress = 'msj42CCGruhRsFrGATiUuh25dtxYtnpbTx';
@@ -1691,7 +1750,7 @@ describe('client API', function() {
             notifications.length.should.equal(0);
             clock.tick(2000);
             clients[1].createAddress((err, x) => {
-              should.not.exist(err);
+              should.not.exist(err,err);
               clients[0]._fetchLatestNotifications(5, () => {
                 _.map(notifications, 'type').should.deep.equal(['NewAddress']);
                 clock.tick(2000);
@@ -1699,7 +1758,7 @@ describe('client API', function() {
                 clients[0]._fetchLatestNotifications(5, () => {
                   notifications.length.should.equal(0);
                   clients[1].createAddress((err, x) => {
-                    should.not.exist(err);
+                    should.not.exist(err,err);
                     clock.tick(60 * 1000);
                     clients[0]._fetchLatestNotifications(5, () => {
                       notifications.length.should.equal(0);
@@ -1756,13 +1815,13 @@ describe('client API', function() {
 
       var spy = sinon.spy(clients[0].request, 'post');
       clients[0].createWallet('mywallet', 'pepe', 1, 1, {}, (err, secret) => {
-        should.not.exist(err);
+        should.not.exist(err,err);
         var url = spy.getCall(0).args[0];
         var body = JSON.stringify(spy.getCall(0).args[1]);
         url.should.contain('/wallets');
         body.should.not.contain('mywallet');
         clients[0].getStatus({}, (err, status) => {
-          should.not.exist(err);
+          should.not.exist(err,err);
           status.wallet.name.should.equal('mywallet');
           done();
         });
@@ -1781,13 +1840,13 @@ describe('client API', function() {
 
       var spy = sinon.spy(clients[0].request, 'post');
       clients[0].createWallet('mywallet', 'pepe', 1, 1, {}, (err, secret) => {
-        should.not.exist(err);
+        should.not.exist(err,err);
         var url = spy.getCall(1).args[0];
         var body = JSON.stringify(spy.getCall(1).args[1]);
         url.should.contain('/copayers');
         body.should.not.contain('pepe');
         clients[0].getStatus({}, (err, status) => {
-          should.not.exist(err);
+          should.not.exist(err,err);
           status.wallet.copayers[0].name.should.equal('pepe');
           done();
         });
@@ -1814,7 +1873,7 @@ describe('client API', function() {
         id: '123'
       };
       clients[0].request.post('/v2/wallets/', args, (err, wallet) => {
-        should.not.exist(err);
+        should.not.exist(err,err);
         var c = clients[0].credentials;
 
         var args = {
@@ -1832,11 +1891,11 @@ describe('client API', function() {
         var hash = Utils.getCopayerHash(args.name, args.xPubKey, args.requestPubKey);
         args.copayerSignature = Utils.signMessage(hash, wpk);
         clients[0].request.post('/v2/wallets/123/copayers', args, (err, wallet) => {
-          should.not.exist(err);
+          should.not.exist(err,err);
           clients[0].openWallet(err => {
-            should.not.exist(err);
+            should.not.exist(err,err);
             clients[0].getStatus({}, (err, status) => {
-              should.not.exist(err);
+              should.not.exist(err,err);
               var wallet = status.wallet;
               wallet.name.should.equal('mywallet');
               should.not.exist(wallet.encryptedName);
@@ -1861,10 +1920,10 @@ describe('client API', function() {
 
       helpers.createAndJoinWallet(clients, keys, 1, 1, {}, () => {
         clients[0].getBalance({}, (err, balance) => {
-          should.not.exist(err);
-          balance.totalAmount.should.equal(0);
-          balance.availableAmount.should.equal(0);
-          balance.lockedAmount.should.equal(0);
+          should.not.exist(err,err);
+          checkBig(balance.totalAmount, 0);
+          checkBig(balance.availableAmount, 0);
+          checkBig(balance.lockedAmount, 0);
           done();
         });
       });
@@ -1882,11 +1941,11 @@ describe('client API', function() {
 
       helpers.createAndJoinWallet(clients, keys, 2, 3, {}, () => {
         clients[0].getBalance({}, (err, x) => {
-          should.not.exist(err);
+          should.not.exist(err,err);
           clients[1].getBalance({}, (err, x) => {
-            should.not.exist(err);
+            should.not.exist(err,err);
             clients[2].getBalance({}, (err, x) => {
-              should.not.exist(err);
+              should.not.exist(err,err);
               done();
             });
           });
@@ -1914,7 +1973,7 @@ describe('client API', function() {
         if (++checks == 2) done();
       });
       clients[0].createWallet('mywallet', 'creator', 2, 2, {}, (err, secret) => {
-        should.not.exist(err);
+        should.not.exist(err,err);
         clients[0].isComplete().should.equal(false);
         clients[0].credentials.isComplete().should.equal(false);
 
@@ -1929,10 +1988,10 @@ describe('client API', function() {
         );
 
         clients[1].joinWallet(secret, 'guest', {}, (err, wallet) => {
-          should.not.exist(err);
+          should.not.exist(err,err);
           wallet.name.should.equal('mywallet');
           clients[0].openWallet((err, walletStatus) => {
-            should.not.exist(err);
+            should.not.exist(err,err);
             should.exist(walletStatus);
             _.difference(_.map(walletStatus.copayers, 'name'), ['creator', 'guest']).length.should.equal(0);
             if (++checks == 2) done();
@@ -1952,7 +2011,7 @@ describe('client API', function() {
       );
 
       clients[0].createWallet('XXX', 'creator', 2, 3, {}, (err, secret) => {
-        should.not.exist(err);
+        should.not.exist(err,err);
         let k2 = new Key({ seedData: k.get(null, true).mnemonic, seedType: 'mnemonic' });
         clients[1].fromString(
           k2.createCredentials(null, {
@@ -1967,7 +2026,7 @@ describe('client API', function() {
           clients[1].credentials.walletName.should.equal('XXX');
           clients[1].credentials.m.should.equal(2);
           clients[1].credentials.n.should.equal(3);
-          should.not.exist(err);
+          should.not.exist(err,err);
           done();
         });
       });
@@ -1992,7 +2051,7 @@ describe('client API', function() {
           network: 'testnet'
         },
         (err, secret) => {
-          should.not.exist(err);
+          should.not.exist(err,err);
           let k2 = new Key({ seedType:'new'});
           clients[1].fromString(
             k2.createCredentials(null, {
@@ -2006,7 +2065,7 @@ describe('client API', function() {
           clients[1].credentials.rootPath.should.equal("m/48'/1'/5'");
 
           clients[1].joinWallet(secret, 'guest', {}, (err, wallet) => {
-            should.not.exist(err);
+            should.not.exist(err,err);
             wallet.name.should.equal('mywallet');
             wallet.copayers[0].name.should.equal('creator');
             wallet.copayers[1].name.should.equal('guest');
@@ -2035,7 +2094,7 @@ describe('client API', function() {
           network: 'testnet'
         },
         (err, secret) => {
-          should.not.exist(err);
+          should.not.exist(err,err);
           let k2 = new Key({ seedType:'new'});
           clients[1].fromString(
             k2.createCredentials(null, {
@@ -2218,7 +2277,7 @@ describe('client API', function() {
       );
 
       clients[0].createWallet('mywallet', 'creator', 1, 2, {}, (err, secret) => {
-        should.not.exist(err);
+        should.not.exist(err,err);
         should.exist(secret);
         clients[1].fromString(
           k.createCredentials(null, {
@@ -2235,7 +2294,7 @@ describe('client API', function() {
             dryRun: true
           },
           (err, wallet) => {
-            should.not.exist(err);
+            should.not.exist(err,err);
             should.exist(wallet);
             wallet.status.should.equal('pending');
             wallet.copayers.length.should.equal(1);
@@ -2264,11 +2323,11 @@ describe('client API', function() {
           network: 'testnet'
         },
         (err, secret) => {
-          should.not.exist(err);
+          should.not.exist(err,err);
           should.exist(secret);
 
           clients[0].getStatus({}, (err, status) => {
-            should.not.exist(err);
+            should.not.exist(err,err);
             should.exist(status);
             status.wallet.status.should.equal('pending');
             should.exist(status.wallet.secret);
@@ -2298,9 +2357,9 @@ describe('client API', function() {
           network: 'testnet'
         },
         (err, secret) => {
-          should.not.exist(err);
+          should.not.exist(err,err);
           clients[0].getStatus({}, (err, status) => {
-            should.not.exist(err);
+            should.not.exist(err,err);
             should.not.exist(status.wallet.publicKeyRing);
             status.wallet.status.should.equal('complete');
             done();
@@ -2328,13 +2387,13 @@ describe('client API', function() {
           network: 'testnet'
         },
         (err, secret) => {
-          should.not.exist(err);
+          should.not.exist(err,err);
           clients[0].getStatus(
             {
               includeExtendedInfo: true
             },
             (err, status) => {
-              should.not.exist(err);
+              should.not.exist(err,err);
               status.wallet.publicKeyRing.length.should.equal(1);
               status.wallet.status.should.equal('complete');
               done();
@@ -2364,13 +2423,13 @@ describe('client API', function() {
         },
         err => {
           var key = clients[0].credentials.walletPrivKey;
-          should.not.exist(err);
+          should.not.exist(err,err);
           clients[0].getStatus(
             {
               includeExtendedInfo: true
             },
             (err, status) => {
-              should.not.exist(err);
+              should.not.exist(err,err);
               status.wallet.publicKeyRing.length.should.equal(1);
               status.wallet.status.should.equal('complete');
               var key2 = status.customData.walletPrivKey;
@@ -2406,13 +2465,13 @@ describe('client API', function() {
           var skey = clients[0].credentials.sharedEncryptingKey;
           delete clients[0].credentials.walletPrivKey;
           delete clients[0].credentials.sharedEncryptingKey;
-          should.not.exist(err);
+          should.not.exist(err,err);
           clients[0].getStatus(
             {
               includeExtendedInfo: true
             },
             (err, status) => {
-              should.not.exist(err);
+              should.not.exist(err,err);
               clients[0].credentials.walletPrivKey.should.equal(wkey);
               clients[0].credentials.sharedEncryptingKey.should.equal(skey);
               done();
@@ -2448,9 +2507,9 @@ describe('client API', function() {
           derivationStrategy: 'BIP48'
         },
         err => {
-          should.not.exist(err);
+          should.not.exist(err,err);
           clients[0].openWallet(err => {
-            should.not.exist(err);
+            should.not.exist(err,err);
             clients[0].credentials.xPubKey.should.equal(
               'xpub6BosfCnifzxcFwrSzQiqu2DBVTshkCXacvNsWGYJVVhhawA7d4R5WSWGFNbi8Aw6ZRc1brxMyWMzG3DSSSSoekkudhUd9yLb6qx39T9nMdj'
             );
@@ -2486,10 +2545,10 @@ describe('client API', function() {
           network: 'livenet'
         },
         (err, secret) => {
-          should.not.exist(err);
+          should.not.exist(err,err);
           should.exist(secret);
           clients[0].openWallet(err => {
-            should.not.exist(err);
+            should.not.exist(err,err);
             clients[0].credentials.xPubKey.should.equal(
               'xpub6CKZtUaK1YHpQbg6CLaGRmsMKLQB1iKzsvmxtyHD6X7gzLqCB2VNZYd1XCxrccQnE8hhDxtYbR1Sakkvisy2J4CcTxWeeGjmkasCoNS9vZm'
             );
@@ -2519,9 +2578,9 @@ describe('client API', function() {
           coin: 'bch'
         },
         (err, secret) => {
-          should.not.exist(err);
+          should.not.exist(err,err);
           clients[0].getStatus({}, (err, status) => {
-            should.not.exist(err);
+            should.not.exist(err,err);
             status.wallet.coin.should.equal('bch');
             done();
           });
@@ -2551,10 +2610,10 @@ describe('client API', function() {
           coin: 'bch'
         },
         (err, secret) => {
-          should.not.exist(err);
+          should.not.exist(err,err);
 
           clients[0].createAddress((err, x) => {
-            should.not.exist(err);
+            should.not.exist(err,err);
             x.coin.should.equal('bch');
             x.network.should.equal('livenet');
             x.address.should.equal('qrvcdmgpk73zyfd8pmdl9wnuld36zh9n4gms8s0u59');
@@ -2573,7 +2632,7 @@ describe('client API', function() {
         { network: 'livenet', addressType: 'P2WPKH', useNativeSegwit: true },
         w => {
           clients[0].createAddress((err, client) => {
-            should.not.exist(err);
+            should.not.exist(err,err);
             client.address.should.include('bc1');
             client.address.length.should.equal(42);
             client.type.should.equal('P2WPKH');
@@ -2592,7 +2651,7 @@ describe('client API', function() {
         { network: 'testnet', addressType: 'P2WPKH', useNativeSegwit: true },
         w => {
           clients[0].createAddress((err, client) => {
-            should.not.exist(err);
+            should.not.exist(err,err);
             client.address.should.include('tb1');
             client.address.length.should.equal(42);
             client.type.should.equal('P2WPKH');
@@ -2611,7 +2670,7 @@ describe('client API', function() {
         { network: 'livenet', addressType: 'P2WSH', useNativeSegwit: true },
         w => {
           clients[0].createAddress((err, client) => {
-            should.not.exist(err);
+            should.not.exist(err,err);
             client.address.should.include('bc1');
             client.address.length.should.equal(62);
             client.type.should.equal('P2WSH');
@@ -2630,7 +2689,7 @@ describe('client API', function() {
         { network: 'testnet', addressType: 'P2WSH', useNativeSegwit: true },
         w => {
           clients[0].createAddress((err, client) => {
-            should.not.exist(err);
+            should.not.exist(err,err);
             client.address.should.include('tb1');
             client.address.length.should.equal(62);
             client.type.should.equal('P2WSH');
@@ -2645,9 +2704,9 @@ describe('client API', function() {
     beforeEach(done => {
       helpers.createAndJoinWallet(clients, keys, 1, 1, {}, w => {
         clients[0].createAddress((err, x0) => {
-          should.not.exist(err);
+          should.not.exist(err,err);
           clients[0].createAddress((err, x0) => {
-            should.not.exist(err);
+            should.not.exist(err,err);
             blockchainExplorerMock.setUtxo(x0, 1, 1);
             done();
           });
@@ -2660,7 +2719,7 @@ describe('client API', function() {
           doNotVerify: true
         },
         (err, addr) => {
-          should.not.exist(err);
+          should.not.exist(err,err);
           addr.length.should.equal(2);
           done();
         }
@@ -2673,9 +2732,9 @@ describe('client API', function() {
         message: 'hello 1-1'
       };
       helpers.createAndPublishTxProposal(clients[0], opts, (err, x) => {
-        should.not.exist(err);
+        should.not.exist(err,err);
         clients[0].getMainAddresses({}, (err, addr) => {
-          should.not.exist(err);
+          should.not.exist(err,err);
           addr.length.should.equal(2);
           done();
         });
@@ -2691,14 +2750,14 @@ describe('client API', function() {
     });
     it('Should return UTXOs', done => {
       clients[0].getUtxos({}, (err, utxos) => {
-        should.not.exist(err);
+        should.not.exist(err,err);
         utxos.length.should.equal(0);
         clients[0].createAddress((err, x0) => {
-          should.not.exist(err);
+          should.not.exist(err,err);
           should.exist(x0.address);
           blockchainExplorerMock.setUtxo(x0, 1, 1);
           clients[0].getUtxos({}, (err, utxos) => {
-            should.not.exist(err);
+            should.not.exist(err,err);
             utxos.length.should.equal(1);
             done();
           });
@@ -2710,7 +2769,7 @@ describe('client API', function() {
         _.range(3),
         (i, next) => {
           clients[0].createAddress((err, x) => {
-            should.not.exist(err);
+            should.not.exist(err,err);
             should.exist(x.address);
             blockchainExplorerMock.setUtxo(x, 1, 1);
             next(null, x.address);
@@ -2721,7 +2780,7 @@ describe('client API', function() {
             addresses: _.take(addresses, 1)
           };
           clients[0].getUtxos(opts, (err, utxos) => {
-            should.not.exist(err);
+            should.not.exist(err,err);
             utxos.length.should.equal(1);
             _.sumBy(utxos, 'satoshis').should.equal(1 * 1e8);
             done();
@@ -2740,7 +2799,7 @@ describe('client API', function() {
       });
       clients[0].credentials = {};
       clients[0].getFeeLevels('btc', 'livenet', (err, levels) => {
-        should.not.exist(err);
+        should.not.exist(err,err);
         should.exist(levels);
         _.difference(['priority', 'normal', 'economy'], _.map(levels, 'level')).should.be.empty;
         done();
@@ -2750,7 +2809,7 @@ describe('client API', function() {
       blockchainExplorerMock.setFeeLevels({});
       clients[0].credentials = {};
       clients[0].getFeeLevels('bch', 'livenet', (err, levels) => {
-        should.not.exist(err);
+        should.not.exist(err,err);
         should.exist(levels);
         levels[0].level.should.equal('normal');
         levels[0].feePerKb.should.equal(2100);
@@ -2781,16 +2840,16 @@ describe('client API', function() {
     it('should save and retrieve preferences', done => {
       helpers.createAndJoinWallet(clients, keys, 1, 1, {}, () => {
         clients[0].getPreferences((err, preferences) => {
-          should.not.exist(err);
+          should.not.exist(err,err);
           preferences.should.be.empty;
           clients[0].savePreferences(
             {
               email: 'dummy@dummy.com'
             },
             err => {
-              should.not.exist(err);
+              should.not.exist(err,err);
               clients[0].getPreferences((err, preferences) => {
-                should.not.exist(err);
+                should.not.exist(err,err);
                 should.exist(preferences);
                 preferences.email.should.equal('dummy@dummy.com');
                 done();
@@ -2812,7 +2871,7 @@ describe('client API', function() {
             ts: now
           },
           (err, res) => {
-            should.not.exist(err);
+            should.not.exist(err,err);
             should.exist(res);
             res.ts.should.equal(now);
             should.not.exist(res.rate);
@@ -2830,7 +2889,7 @@ describe('client API', function() {
           statusCode: 200
         });
         clients[0].pushNotificationsSubscribe((err, res) => {
-          should.not.exist(err);
+          should.not.exist(err,err);
           should.exist(res);
           res.statusCode.should.be.equal(200);
           done();
@@ -2842,7 +2901,7 @@ describe('client API', function() {
       helpers.createAndJoinWallet(clients, keys, 1, 1, {}, () => {
         clients[0].request.doRequest = sinon.stub().yields(null);
         clients[0].pushNotificationsUnsubscribe('123', err => {
-          should.not.exist(err);
+          should.not.exist(err,err);
           done();
         });
       });
@@ -2860,7 +2919,7 @@ describe('client API', function() {
             txid: '123'
           },
           (err, res) => {
-            should.not.exist(err);
+            should.not.exist(err,err);
             should.exist(res);
             res.statusCode.should.be.equal(200);
             done();
@@ -2873,7 +2932,7 @@ describe('client API', function() {
       helpers.createAndJoinWallet(clients, keys, 1, 1, {}, () => {
         clients[0].request.doRequest = sinon.stub().yields(null);
         clients[0].txConfirmationUnsubscribe('123', err => {
-          should.not.exist(err);
+          should.not.exist(err,err);
           done();
         });
       });
@@ -2885,12 +2944,12 @@ describe('client API', function() {
     beforeEach(done => {
       helpers.createAndJoinWallet(clients, keys, 1, 1, {}, () => {
         clients[0].createAddress((err, address) => {
-          should.not.exist(err);
+          should.not.exist(err,err);
           should.exist(address.address);
           blockchainExplorerMock.setUtxo(address, 2, 1, 1);
           blockchainExplorerMock.setUtxo(address, 1, 1, 0);
           clients[0].getBalance({}, (err, bl) => {
-            should.not.exist(err);
+            should.not.exist(err,err);
             balance = bl;
             done();
           });
@@ -2907,14 +2966,14 @@ describe('client API', function() {
         returnInputs: true
       };
       clients[0].getSendMaxInfo(opts, (err, result) => {
-        should.not.exist(err);
+        should.not.exist(err,err);
         should.exist(result);
         result.inputs.length.should.be.equal(2);
-        result.amount.should.be.equal(balance.totalAmount - result.fee);
+        checkBig(result.amount, Number(balance.totalAmount) - result.fee);
         result.utxosBelowFee.should.be.equal(0);
-        result.amountBelowFee.should.be.equal(0);
+        checkBig(result.amountBelowFee, 0);
         result.utxosAboveMaxSize.should.be.equal(0);
-        result.amountAboveMaxSize.should.be.equal(0);
+        checkBig(result.amountAboveMaxSize, 0);
         done();
       });
     });
@@ -2925,8 +2984,8 @@ describe('client API', function() {
         returnInputs: true
       };
       clients[0].getSendMaxInfo(opts, (err, result) => {
-        should.not.exist(err);
-        result.amount.should.be.equal(balance.availableConfirmedAmount - result.fee);
+        should.not.exist(err,err);
+        checkBig(result.amount, balance.availableConfirmedAmount - BigInt(result.fee));
         done();
       });
     });
@@ -2937,9 +2996,9 @@ describe('client API', function() {
         returnInputs: true
       };
       clients[0].getSendMaxInfo(opts, (err, result) => {
-        should.not.exist(err);
-        result.amount.should.be.equal(balance.totalAmount - result.fee);
-        done();
+        should.not.exist(err,err);
+        checkBig(result.amount, balance.totalAmount - BigInt(result.fee));
+        done()
       });
     });
     it('should return data without inputs', done => {
@@ -2949,7 +3008,7 @@ describe('client API', function() {
         returnInputs: false
       };
       clients[0].getSendMaxInfo(opts, (err, result) => {
-        should.not.exist(err);
+        should.not.exist(err,err);
         result.inputs.length.should.be.equal(0);
         done();
       });
@@ -2961,13 +3020,13 @@ describe('client API', function() {
         returnInputs: true
       };
       clients[0].getSendMaxInfo(opts, (err, result) => {
-        should.not.exist(err);
+        should.not.exist(err,err);
         result.inputs.length.should.not.equal(0);
         var totalSatoshis = 0;
         _.each(result.inputs, i => {
           totalSatoshis = totalSatoshis + i.satoshis;
         });
-        result.amount.should.be.equal(totalSatoshis - result.fee);
+        checkBig(result.amount, totalSatoshis - result.fee);
         done();
       });
     });
@@ -2977,7 +3036,7 @@ describe('client API', function() {
     it('should be able to create address in 1-of-1 wallet', done => {
       helpers.createAndJoinWallet(clients, keys, 1, 1, {}, () => {
         clients[0].createAddress((err, x) => {
-          should.not.exist(err);
+          should.not.exist(err,err);
           should.exist(x.address);
           x.address.charAt(0).should.not.equal('2');
           done();
@@ -2999,14 +3058,14 @@ describe('client API', function() {
       this.timeout(5000);
       helpers.createAndJoinWallet(clients, keys, 2, 3, {}, () => {
         clients[0].createAddress((err, x) => {
-          should.not.exist(err);
+          should.not.exist(err,err);
           should.exist(x.address);
           x.address.charAt(0).should.equal('2');
           clients[1].createAddress((err, x) => {
-            should.not.exist(err);
+            should.not.exist(err,err);
             should.exist(x.address);
             clients[2].createAddress((err, x) => {
-              should.not.exist(err);
+              should.not.exist(err,err);
               should.exist(x.address);
               done();
             });
@@ -3018,17 +3077,17 @@ describe('client API', function() {
       // timeout(5000);
       helpers.createAndJoinWallet(clients, keys, 2, 2, {}, w => {
         clients[0].createAddress((err, x0) => {
-          should.not.exist(err);
+          should.not.exist(err,err);
           should.exist(x0.address);
 
           blockchainExplorerMock.setUtxo(x0, 10, w.m);
           clients[0].getBalance({}, (err, bal0) => {
-            should.not.exist(err);
-            bal0.totalAmount.should.equal(10 * 1e8);
-            bal0.lockedAmount.should.equal(0);
+            should.not.exist(err,err);
+            checkBig(bal0.totalAmount, 10 * 1e8);
+            checkBig(bal0.lockedAmount, 0);
             clients[1].getBalance({}, (err, bal1) => {
-              bal1.totalAmount.should.equal(10 * 1e8);
-              bal1.lockedAmount.should.equal(0);
+              checkBig(bal1.totalAmount, 10 * 1e8);
+              checkBig(bal1.lockedAmount, 0);
               done();
             });
           });
@@ -3087,7 +3146,7 @@ describe('client API', function() {
             },
             (err, x) => {
               if (err) console.log(err);
-              should.not.exist(err);
+              should.not.exist(err,err);
               should.exist(x.address);
               callback(err, x);
             }
@@ -3100,7 +3159,7 @@ describe('client API', function() {
         }
 
         async.parallel(tasks, (err, results) => {
-          should.not.exist(err);
+          should.not.exist(err,err);
           results.length.should.equal(num);
           done();
         });
@@ -3131,7 +3190,7 @@ describe('client API', function() {
             coin: 'eth'
           },
           err => {
-            should.not.exist(err);
+            should.not.exist(err,err);
             clients[0].createAddress((err, x0) => {
               clients[1].fromString(
                 k.createCredentials(null, {
@@ -3152,7 +3211,7 @@ describe('client API', function() {
                   coin: 'eth'
                 },
                 err => {
-                  should.not.exist(err);
+                  should.not.exist(err,err);
                   clients[1].createAddress((err, x1) => {
                     clients[0].credentials.copayerId.should.not.equal(clients[1].credentials.copayerId);
                     // in ETH, same account address for livenet and testnet should match
@@ -3176,10 +3235,10 @@ describe('client API', function() {
       helpers.createAndJoinWallet(clients, keys, 2, 2, {}, () => {
         clock.tick(25 * 1000);
         clients[0].createAddress((err, x) => {
-          should.not.exist(err);
+          should.not.exist(err,err);
           clock.tick(25 * 1000);
           clients[1].createAddress((err, x) => {
-            should.not.exist(err);
+            should.not.exist(err,err);
             done();
           });
         });
@@ -3190,7 +3249,7 @@ describe('client API', function() {
     });
     it('should receive notifications', done => {
       clients[0].getNotifications({}, (err, notifications) => {
-        should.not.exist(err);
+        should.not.exist(err,err);
         notifications.length.should.equal(3);
         _.map(notifications, 'type').should.deep.equal(['NewCopayer', 'WalletComplete', 'NewAddress']);
         clients[0].getNotifications(
@@ -3198,7 +3257,7 @@ describe('client API', function() {
             lastNotificationId: _.last(notifications).id
           },
           (err, notifications) => {
-            should.not.exist(err);
+            should.not.exist(err,err);
             notifications.length.should.equal(0, 'should only return unread notifications');
             done();
           }
@@ -3208,14 +3267,14 @@ describe('client API', function() {
     it('should not receive old notifications', done => {
       clock.tick(61 * 1000); // more than 60 seconds
       clients[0].getNotifications({}, (err, notifications) => {
-        should.not.exist(err);
+        should.not.exist(err,err);
         notifications.length.should.equal(0);
         done();
       });
     });
     it('should not receive notifications for self generated events unless specified', done => {
       clients[0].getNotifications({}, (err, notifications) => {
-        should.not.exist(err);
+        should.not.exist(err,err);
         notifications.length.should.equal(3);
         _.map(notifications, 'type').should.deep.equal(['NewCopayer', 'WalletComplete', 'NewAddress']);
         clients[0].getNotifications(
@@ -3223,7 +3282,7 @@ describe('client API', function() {
             includeOwn: true
           },
           (err, notifications) => {
-            should.not.exist(err);
+            should.not.exist(err,err);
             notifications.length.should.equal(5);
             _.map(notifications, 'type').should.deep.equal([
               'NewCopayer',
@@ -3244,7 +3303,7 @@ describe('client API', function() {
     beforeEach(done => {
       helpers.createAndJoinWallet(clients, keys, 2, 3, {}, w => {
         clients[0].createAddress((err, address) => {
-          should.not.exist(err);
+          should.not.exist(err,err);
           myAddress = address;
           blockchainExplorerMock.setUtxo(address, 2, 2);
           blockchainExplorerMock.setUtxo(address, 2, 2);
@@ -3280,13 +3339,16 @@ describe('client API', function() {
         }
       };
       clients[0].createTxProposal(opts, (err, txp) => {
-        should.not.exist(err);
+        should.not.exist(err,err);
         should.exist(txp);
 
         txp.status.should.equal('temporary');
         txp.message.should.equal('hello');
         txp.outputs.length.should.equal(2);
-        _.sumBy(txp.outputs, 'amount').should.equal(3e8);
+
+        checkBig(_.reduce(txp.outputs, (x, i) => { 
+          return x + BigInt(i.amount || 0); }, 
+          BigInt(0) ), 3e8);
         txp.outputs[0].message.should.equal('world');
         _.uniqBy(txp.outputs, 'toAddress').length.should.equal(1);
         _.uniq(_.map(txp.outputs, 'toAddress'))[0].should.equal(toAddress);
@@ -3298,7 +3360,7 @@ describe('client API', function() {
         should.exist(txp.outputs[0].encryptedMessage);
 
         clients[0].getTxProposals({}, (err, txps) => {
-          should.not.exist(err);
+          should.not.exist(err,err);
           txps.should.be.empty;
 
           clients[0].publishTxProposal(
@@ -3306,11 +3368,11 @@ describe('client API', function() {
               txp: txp
             },
             (err, publishedTxp) => {
-              should.not.exist(err);
+              should.not.exist(err,err);
               should.exist(publishedTxp);
               publishedTxp.status.should.equal('pending');
               clients[0].getTxProposals({}, (err, txps) => {
-                should.not.exist(err);
+                should.not.exist(err,err);
                 txps.length.should.equal(1);
                 var x = txps[0];
                 x.id.should.equal(txp.id);
@@ -3319,7 +3381,7 @@ describe('client API', function() {
                 should.not.exist(x.proposalSignaturePubKeySig);
                 // Should be visible for other copayers as well
                 clients[1].getTxProposals({}, (err, txps) => {
-                  should.not.exist(err);
+                  should.not.exist(err,err);
                   txps.length.should.equal(1);
                   txps[0].id.should.equal(txp.id);
                   done();
@@ -3359,7 +3421,7 @@ describe('client API', function() {
         }
       };
       clients[0].createTxProposal(opts, (err, txp) => {
-        should.not.exist(err);
+        should.not.exist(err,err);
         should.exist(txp);
         txp.status.should.equal('temporary');
         txp.feeLevel.should.equal('economy');
@@ -3369,15 +3431,15 @@ describe('client API', function() {
             txp: txp
           },
           (err, publishedTxp) => {
-            should.not.exist(err);
+            should.not.exist(err,err);
             should.exist(publishedTxp);
             publishedTxp.status.should.equal('pending');
             clients[0].getTxProposals({}, (err, txps) => {
-              should.not.exist(err);
+              should.not.exist(err,err);
               txps.length.should.equal(1);
               // Try to republish from copayer 1
               clients[1].createTxProposal(opts, (err, txp) => {
-                should.not.exist(err);
+                should.not.exist(err,err);
                 should.exist(txp);
                 txp.status.should.equal('pending');
                 clients[1].publishTxProposal(
@@ -3385,7 +3447,7 @@ describe('client API', function() {
                     txp: txp
                   },
                   (err, publishedTxp) => {
-                    should.not.exist(err);
+                    should.not.exist(err,err);
                     should.exist(publishedTxp);
                     publishedTxp.status.should.equal('pending');
                     done();
@@ -3466,7 +3528,7 @@ describe('client API', function() {
           });
         },
         err => {
-          should.not.exist(err);
+          should.not.exist(err,err);
           clients[0]._getCreateTxProposalArgs = tmp;
           done();
         }
@@ -3534,7 +3596,7 @@ describe('client API', function() {
           }
         ],
         err => {
-          should.not.exist(err);
+          should.not.exist(err,err);
           done();
         }
       );
@@ -3546,9 +3608,9 @@ describe('client API', function() {
         message: 'hello'
       };
       helpers.createAndPublishTxProposal(clients[0], opts, (err, x) => {
-        should.not.exist(err);
+        should.not.exist(err,err);
         clients[0].getTx(x.id, (err, x2) => {
-          should.not.exist(err);
+          should.not.exist(err,err);
           x2.hasUnconfirmedInputs.should.equal(true);
           done();
         });
@@ -3578,9 +3640,9 @@ describe('client API', function() {
         err.should.be.an.instanceOf(Errors.INSUFFICIENT_FUNDS_FOR_FEE);
         opts.feePerKb = 100e2;
         helpers.createAndPublishTxProposal(clients[0], opts, (err, x) => {
-          should.not.exist(err);
+          should.not.exist(err,err);
           clients[0].getTx(x.id, (err, x2) => {
-            should.not.exist(err);
+            should.not.exist(err,err);
             should.exist(x2);
             done();
           });
@@ -3593,18 +3655,18 @@ describe('client API', function() {
         toAddress: 'n2TBMPzPECGUfcT2EByiTJ12TPZkhN2mN5'
       };
       helpers.createAndPublishTxProposal(clients[0], opts, (err, x) => {
-        should.not.exist(err);
+        should.not.exist(err,err);
 
         helpers.createAndPublishTxProposal(clients[0], opts, (err, y) => {
           err.should.be.an.instanceOf(Errors.LOCKED_FUNDS);
 
           clients[1].rejectTxProposal(x, 'no', err => {
-            should.not.exist(err);
+            should.not.exist(err,err);
             clients[2].rejectTxProposal(x, 'no', (err, z) => {
-              should.not.exist(err);
+              should.not.exist(err,err);
               z.status.should.equal('rejected');
               helpers.createAndPublishTxProposal(clients[0], opts, (err, x) => {
-                should.not.exist(err);
+                should.not.exist(err,err);
                 done();
               });
             });
@@ -3619,16 +3681,16 @@ describe('client API', function() {
         message: 'hello 1-1'
       };
       helpers.createAndPublishTxProposal(clients[0], opts, (err, x) => {
-        should.not.exist(err);
+        should.not.exist(err,err);
 
         helpers.createAndPublishTxProposal(clients[0], opts, (err, y) => {
           err.should.be.an.instanceOf(Errors.LOCKED_FUNDS);
 
           clients[0].removeTxProposal(x, err => {
-            should.not.exist(err);
+            should.not.exist(err,err);
 
             helpers.createAndPublishTxProposal(clients[0], opts, (err, x) => {
-              should.not.exist(err);
+              should.not.exist(err,err);
               done();
             });
           });
@@ -3642,12 +3704,12 @@ describe('client API', function() {
         message: 'some message'
       };
       helpers.createAndPublishTxProposal(clients[0], opts, (err, x) => {
-        should.not.exist(err);
+        should.not.exist(err,err);
         clients[1].rejectTxProposal(x, 'rejection comment', (err, tx1) => {
-          should.not.exist(err);
+          should.not.exist(err,err);
 
           clients[2].getTxProposals({}, (err, txs) => {
-            should.not.exist(err);
+            should.not.exist(err,err);
             txs[0].message.should.equal('some message');
             txs[0].actions[0].copayerName.should.equal('copayer 1');
             txs[0].actions[0].comment.should.equal('rejection comment');
@@ -3663,14 +3725,14 @@ describe('client API', function() {
         message: 'some message'
       };
       helpers.createAndPublishTxProposal(clients[0], opts, (err, x) => {
-        should.not.exist(err);
+        should.not.exist(err,err);
         clients[1].rejectTxProposal(x, 'rejection comment', (err, tx1) => {
-          should.not.exist(err);
+          should.not.exist(err,err);
 
           clients[2].credentials.sharedEncryptingKey = null;
 
           clients[2].getTxProposals({}, (err, txs) => {
-            should.not.exist(err);
+            should.not.exist(err,err);
             txs[0].message.should.equal('<ECANNOTDECRYPT>');
             txs[0].actions[0].copayerName.should.equal('<ECANNOTDECRYPT>');
             txs[0].actions[0].comment.should.equal('<ECANNOTDECRYPT>');
@@ -3693,7 +3755,7 @@ describe('client API', function() {
       };
       var spy = sinon.spy(clients[0].request, 'post');
       clients[0].createTxProposal(opts, (err, x) => {
-        should.not.exist(err);
+        should.not.exist(err,err);
         spy.calledOnce.should.be.true;
         JSON.stringify(spy.getCall(0).args).should.not.contain('some message');
         done();
@@ -3705,10 +3767,10 @@ describe('client API', function() {
         toAddress: 'n2TBMPzPECGUfcT2EByiTJ12TPZkhN2mN5'
       };
       helpers.createAndPublishTxProposal(clients[0], opts, (err, x) => {
-        should.not.exist(err);
+        should.not.exist(err,err);
         var spy = sinon.spy(clients[1].request, 'post');
         clients[1].rejectTxProposal(x, 'rejection comment', (err, tx1) => {
-          should.not.exist(err);
+          should.not.exist(err,err);
           spy.calledOnce.should.be.true;
           JSON.stringify(spy.getCall(0).args).should.not.contain('rejection comment');
           done();
@@ -3724,7 +3786,7 @@ describe('client API', function() {
           message: 'hello'
         };
         helpers.createAndPublishTxProposal(clients[0], opts, (err, x) => {
-          should.not.exist(err);
+          should.not.exist(err,err);
 
           helpers.tamperResponse(
             clients[0],
@@ -3752,7 +3814,7 @@ describe('client API', function() {
           message: 'hello'
         };
         helpers.createAndPublishTxProposal(clients[0], opts, (err, x) => {
-          should.not.exist(err);
+          should.not.exist(err,err);
 
           helpers.tamperResponse(
             clients[0],
@@ -3779,7 +3841,7 @@ describe('client API', function() {
           message: 'hello'
         };
         helpers.createAndPublishTxProposal(clients[0], opts, (err, x) => {
-          should.not.exist(err);
+          should.not.exist(err,err);
 
           helpers.tamperResponse(
             clients[0],
@@ -3816,7 +3878,7 @@ describe('client API', function() {
         },
         w => {
           clients[0].createAddress((err, address) => {
-            should.not.exist(err);
+            should.not.exist(err,err);
 
             // TODO change createAddress to /v4/, and remove this.
             if (coin == 'bch') {
@@ -3855,23 +3917,23 @@ describe('client API', function() {
           message: 'just some message'
         };
         clients[0].createTxProposal(opts, (err, txp) => {
-          should.not.exist(err);
+          should.not.exist(err,err);
           should.exist(txp);
           clients[0].publishTxProposal(
             {
               txp: txp
             },
             (err, publishedTxp) => {
-              should.not.exist(err);
+              should.not.exist(err,err);
               should.exist(publishedTxp);
               publishedTxp.status.should.equal('pending');
 
               let signatures = keys[0].sign(clients[0].getRootPath(), txp);
               clients[0].pushSignatures(publishedTxp, signatures, (err, txp) => {
-                should.not.exist(err);
+                should.not.exist(err,err);
                 let signatures2 = keys[1].sign(clients[1].getRootPath(), txp);
                 clients[1].pushSignatures(publishedTxp, signatures2, (err, txp) => {
-                  should.not.exist(err);
+                  should.not.exist(err,err);
                   txp.status.should.equal('accepted');
                   done();
                 });
@@ -3893,7 +3955,7 @@ describe('client API', function() {
           feePerKb: 1
         };
         clients[0].createTxProposal(opts, (err, txp) => {
-          should.not.exist(err);
+          should.not.exist(err,err);
           should.exist(txp);
           var t = Utils.buildTx(txp);
           should.not.exist(t.getChangeOutput());
@@ -3902,15 +3964,15 @@ describe('client API', function() {
               txp: txp
             },
             (err, publishedTxp) => {
-              should.not.exist(err);
+              should.not.exist(err,err);
               should.exist(publishedTxp);
               publishedTxp.status.should.equal('pending');
               let signatures = keys[0].sign(clients[0].getRootPath(), txp);
               clients[0].pushSignatures(publishedTxp, signatures, (err, txp) => {
-                should.not.exist(err);
+                should.not.exist(err,err);
                 let signatures2 = keys[1].sign(clients[1].getRootPath(), txp);
                 clients[1].pushSignatures(publishedTxp, signatures2, (err, txp) => {
-                  should.not.exist(err);
+                  should.not.exist(err,err);
                   txp.status.should.equal('accepted');
                   done();
                 });
@@ -3927,7 +3989,7 @@ describe('client API', function() {
             returnInputs: true
           },
           (err, info) => {
-            should.not.exist(err);
+            should.not.exist(err,err);
             var opts = {
               outputs: [
                 {
@@ -3939,7 +4001,7 @@ describe('client API', function() {
               fee: info.fee
             };
             clients[0].createTxProposal(opts, (err, txp) => {
-              should.not.exist(err);
+              should.not.exist(err,err);
               should.exist(txp);
               var t = Utils.buildTx(txp);
               should.not.exist(t.getChangeOutput());
@@ -3948,19 +4010,19 @@ describe('client API', function() {
                   txp: txp
                 },
                 (err, publishedTxp) => {
-                  should.not.exist(err);
+                  should.not.exist(err,err);
                   should.exist(publishedTxp);
                   publishedTxp.status.should.equal('pending');
                   let signatures = keys[0].sign(clients[0].getRootPath(), txp);
                   clients[0].pushSignatures(publishedTxp, signatures, (err, txp) => {
-                    should.not.exist(err);
+                    should.not.exist(err,err);
                     let signatures2 = keys[1].sign(clients[1].getRootPath(), txp);
                     clients[1].pushSignatures(publishedTxp, signatures2, (err, txp) => {
-                      should.not.exist(err);
+                      should.not.exist(err,err);
                       txp.status.should.equal('accepted');
                       clients[0].getBalance({}, (err, balance) => {
-                        should.not.exist(err);
-                        balance.lockedAmount.should.equal(5e8);
+                        should.not.exist(err,err);
+                        checkBig(balance.lockedAmount, 5e8);
                         done();
                       });
                     });
@@ -3992,7 +4054,7 @@ describe('client API', function() {
         clients[0].createTxProposal(
           opts,
           (err, txp) => {
-            should.not.exist(err);
+            should.not.exist(err,err);
             should.exist(txp);
             txp.version.should.equal(3);
             clients[0].publishTxProposal(
@@ -4000,16 +4062,16 @@ describe('client API', function() {
                 txp: txp
               },
               (err, publishedTxp) => {
-                should.not.exist(err);
+                should.not.exist(err,err);
                 should.exist(publishedTxp);
                 publishedTxp.status.should.equal('pending');
 
                 let signatures = keys[0].sign(clients[0].getRootPath(), txp);
                 clients[0].pushSignatures(publishedTxp, signatures, (err, txp) => {
-                  should.not.exist(err);
+                  should.not.exist(err,err);
                   let signatures2 = keys[1].sign(clients[1].getRootPath(), txp);
                   clients[1].pushSignatures(publishedTxp, signatures2, (err, txp) => {
-                    should.not.exist(err);
+                    should.not.exist(err,err);
                     txp.status.should.equal('accepted');
                     done();
                   });
@@ -4038,7 +4100,7 @@ describe('client API', function() {
           message: 'just some message'
         };
         clients[0].createTxProposal(opts, (err, txp) => {
-          should.not.exist(err);
+          should.not.exist(err,err);
           should.exist(txp);
           txp.version.should.equal(4);
           clients[0].publishTxProposal(
@@ -4046,7 +4108,7 @@ describe('client API', function() {
               txp: txp
             },
             (err, publishedTxp) => {
-              should.not.exist(err);
+              should.not.exist(err,err);
               should.exist(publishedTxp);
               let signatures = keys[0].sign(clients[0].getRootPath(), txp);
               clients[0].pushSignatures(
@@ -4081,7 +4143,7 @@ describe('client API', function() {
           message: 'just some message'
         };
         clients[0].createTxProposal(opts, (err, txp) => {
-          should.not.exist(err);
+          should.not.exist(err,err);
           should.exist(txp);
           txp.version.should.equal(4);
           clients[0].publishTxProposal(
@@ -4089,7 +4151,7 @@ describe('client API', function() {
               txp: txp
             },
             (err, publishedTxp) => {
-              should.not.exist(err);
+              should.not.exist(err,err);
               should.exist(publishedTxp);
               txp.version = 3; // get v3 signatures
               let signatures = keys[0].sign(clients[0].getRootPath(), txp);
@@ -4131,20 +4193,20 @@ describe('client API', function() {
           message: 'just some message'
         };
         clients[0].createTxProposal(opts, (err, txp) => {
-          should.not.exist(err);
+          should.not.exist(err,err);
           should.exist(txp);
           clients[0].publishTxProposal(
             {
               txp: txp
             },
             (err, publishedTxp) => {
-              should.not.exist(err);
+              should.not.exist(err,err);
               should.exist(publishedTxp);
               publishedTxp.status.should.equal('pending');
 
               let signatures = keys[0].sign(clients[0].getRootPath(), txp);
               clients[0].pushSignatures(publishedTxp, signatures, (err, txp) => {
-                should.not.exist(err);
+                should.not.exist(err,err);
                 let signatures2 = keys[1].sign(clients[1].getRootPath(), txp);
                 clients[1].pushSignatures(
                   publishedTxp,
@@ -4180,7 +4242,7 @@ describe('client API', function() {
           signingMethod: 'schnorr' // forcing schnorr on BCH/livenet
         };
         clients[0].createTxProposal(opts, (err, txp) => {
-          should.not.exist(err);
+          should.not.exist(err,err);
           should.exist(txp);
           txp.signingMethod.should.equal('schnorr');
           clients[0].publishTxProposal(
@@ -4188,7 +4250,7 @@ describe('client API', function() {
               txp: txp
             },
             (err, publishedTxp) => {
-              should.not.exist(err);
+              should.not.exist(err,err);
               should.exist(publishedTxp);
               publishedTxp.signingMethod.should.equal('schnorr');
               publishedTxp.status.should.equal('pending');
@@ -4198,13 +4260,13 @@ describe('client API', function() {
                 publishedTxp,
                 signatures,
                 (err, txp) => {
-                  should.not.exist(err);
+                  should.not.exist(err,err);
                   let signatures2 = keys[1].sign(clients[1].getRootPath(), txp);
                   clients[1].pushSignatures(
                     publishedTxp,
                     signatures2,
                     (err, txp) => {
-                      should.not.exist(err);
+                      should.not.exist(err,err);
                       txp.status.should.equal('accepted');
                       done();
                     },
@@ -4242,7 +4304,7 @@ describe('client API', function() {
           signingMethod: 'schnorr' // forcing schnorr on BCH/livenet
         };
         clients[0].createTxProposal(opts, (err, txp) => {
-          should.not.exist(err);
+          should.not.exist(err,err);
           should.exist(txp);
           txp.signingMethod.should.equal('schnorr');
           clients[0].publishTxProposal(
@@ -4250,14 +4312,14 @@ describe('client API', function() {
               txp: txp
             },
             (err, publishedTxp) => {
-              should.not.exist(err);
+              should.not.exist(err,err);
               should.exist(publishedTxp);
               publishedTxp.signingMethod.should.equal('schnorr');
               publishedTxp.status.should.equal('pending');
 
               let signatures = keys[0].sign(clients[0].getRootPath(), txp);
               clients[0].pushSignatures(publishedTxp, signatures, (err, txp) => {
-                should.not.exist(err);
+                should.not.exist(err,err);
                 txp.status.should.equal('accepted');
                 done();
               });
@@ -4290,19 +4352,19 @@ describe('client API', function() {
           coin: 'bch'
         };
         clients[0].createTxProposal(opts, (err, txp) => {
-          should.not.exist(err);
+          should.not.exist(err,err);
           should.exist(txp);
           clients[0].publishTxProposal(
             {
               txp: txp
             },
             (err, publishedTxp) => {
-              should.not.exist(err);
+              should.not.exist(err,err);
               should.exist(publishedTxp);
               publishedTxp.status.should.equal('pending');
               let signatures = keys[0].sign(clients[0].getRootPath(), txp);
               clients[0].pushSignatures(publishedTxp, signatures, (err, txp) => {
-                should.not.exist(err);
+                should.not.exist(err,err);
                 txp.status.should.equal('accepted');
                 done();
               });
@@ -4332,14 +4394,14 @@ describe('client API', function() {
         clients[0].createTxProposal(
           opts,
           (err, txp) => {
-            should.not.exist(err);
+            should.not.exist(err,err);
             should.exist(txp);
             clients[0].publishTxProposal(
               {
                 txp: txp
               },
               (err, publishedTxp) => {
-                should.not.exist(err);
+                should.not.exist(err,err);
                 should.exist(publishedTxp);
                 publishedTxp.status.should.equal('pending');
                 let signatures = keys[0].sign(clients[0].getRootPath(), txp);
@@ -4380,14 +4442,14 @@ describe('client API', function() {
         clients[0].createTxProposal(
           opts,
           (err, txp) => {
-            should.not.exist(err);
+            should.not.exist(err,err);
             should.exist(txp);
             clients[0].publishTxProposal(
               {
                 txp: txp
               },
               (err, publishedTxp) => {
-                should.not.exist(err);
+                should.not.exist(err,err);
                 should.exist(publishedTxp);
                 publishedTxp.status.should.equal('pending');
                 let signatures = keys[0].sign(clients[0].getRootPath(), txp);
@@ -4395,7 +4457,7 @@ describe('client API', function() {
                   publishedTxp,
                   signatures,
                   (err, txp) => {
-                    should.not.exist(err);
+                    should.not.exist(err,err);
                     txp.status.should.equal('accepted');
                     done();
                   },
@@ -4428,7 +4490,7 @@ describe('client API', function() {
         clients[0].createTxProposal(
           opts,
           (err, txp) => {
-            should.not.exist(err);
+            should.not.exist(err,err);
             should.exist(txp);
             txp.version.should.equal(3);
             clients[0].publishTxProposal(
@@ -4436,13 +4498,13 @@ describe('client API', function() {
                 txp: txp
               },
               (err, publishedTxp) => {
-                should.not.exist(err);
+                should.not.exist(err,err);
                 should.exist(publishedTxp);
                 publishedTxp.status.should.equal('pending');
 
                 let signatures = keys[0].sign(clients[0].getRootPath(), txp);
                 clients[0].pushSignatures(publishedTxp, signatures, (err, txp) => {
-                  should.not.exist(err);
+                  should.not.exist(err,err);
                   txp.status.should.equal('accepted');
                   done();
                 });
@@ -4470,7 +4532,7 @@ describe('client API', function() {
           message: 'just some message'
         };
         clients[0].createTxProposal(opts, (err, txp) => {
-          should.not.exist(err);
+          should.not.exist(err,err);
           should.exist(txp);
           txp.version.should.equal(4);
           clients[0].publishTxProposal(
@@ -4478,7 +4540,7 @@ describe('client API', function() {
               txp: txp
             },
             (err, publishedTxp) => {
-              should.not.exist(err);
+              should.not.exist(err,err);
               should.exist(publishedTxp);
               let signatures = keys[0].sign(clients[0].getRootPath(), txp);
               clients[0].pushSignatures(
@@ -4513,7 +4575,7 @@ describe('client API', function() {
           message: 'just some message'
         };
         clients[0].createTxProposal(opts, (err, txp) => {
-          should.not.exist(err);
+          should.not.exist(err,err);
           should.exist(txp);
           txp.version.should.equal(4);
           clients[0].publishTxProposal(
@@ -4521,7 +4583,7 @@ describe('client API', function() {
               txp: txp
             },
             (err, publishedTxp) => {
-              should.not.exist(err);
+              should.not.exist(err,err);
               should.exist(publishedTxp);
               txp.version = 3; // get v3 signatures
               let signatures = keys[0].sign(clients[0].getRootPath(), txp);
@@ -4628,7 +4690,7 @@ describe('client API', function() {
             mockRequest(Buffer.from(TestData.payProJsonV2.btc.body, 'hex'), TestData.payProJsonV2.btc.headers);
             helpers.createAndJoinWallet(clients, keys, 1, 1, x.opts, w => {
               clients[0].createAddress((err, x0) => {
-                should.not.exist(err);
+                should.not.exist(err,err);
                 should.exist(x0.address);
                 blockchainExplorerMock.setUtxo(x0, 1, 2);
                 blockchainExplorerMock.setUtxo(x0, 1, 2);
@@ -4647,7 +4709,7 @@ describe('client API', function() {
                       payProUrl: paypro.payProUrl
                     },
                     (err, x) => {
-                      should.not.exist(err);
+                      should.not.exist(err,err);
                       resolve();
                     }
                   );
@@ -4658,15 +4720,15 @@ describe('client API', function() {
         });
         it('Should send the signed tx in paypro', function(done) {
           clients[0].getTxProposals({}, (err, txps) => {
-            should.not.exist(err);
+            should.not.exist(err,err);
             let signatures = keys[0].sign(clients[0].getRootPath(), txps[0]);
             clients[0].pushSignatures(txps[0], signatures, (err, xx, paypro) => {
-              should.not.exist(err);
+              should.not.exist(err,err);
               xx.status.should.equal('accepted');
 
               let spy = sinon.spy(Client.PayProV2.request, 'post');
               clients[0].broadcastTxProposal(xx, (err, zz, memo) => {
-                should.not.exist(err);
+                should.not.exist(err,err);
                 spy.called.should.be.true;
 
                 // unsigned
@@ -4695,7 +4757,7 @@ describe('client API', function() {
           mockRequest(Buffer.from(TestData.payProJsonV2.btc.body, 'hex'), TestData.payProJsonV2.btc.headers);
           helpers.createAndJoinWallet(clients, keys, 2, 2, { network: 'livenet' }, w => {
             clients[0].createAddress((err, x0) => {
-              should.not.exist(err);
+              should.not.exist(err,err);
               should.exist(x0.address);
               blockchainExplorerMock.setUtxo(x0, 1, 2);
               blockchainExplorerMock.setUtxo(x0, 1, 2);
@@ -4714,7 +4776,7 @@ describe('client API', function() {
                     payProUrl: paypro.payProUrl
                   },
                   (err, x) => {
-                    should.not.exist(err);
+                    should.not.exist(err,err);
                     resolve();
                   }
                 );
@@ -4727,10 +4789,10 @@ describe('client API', function() {
       it('Should Create and Verify a Tx from PayPro', done => {
         clients[1].getTxProposals({}, (err, txps) => {
           try {
-            should.not.exist(err);
+            should.not.exist(err,err);
             var tx = txps[0];
             // From the hardcoded paypro request
-            tx.outputs[0].amount.should.equal(DATA.instructions[0].outputs[0].amount);
+            checkBig(tx.outputs[0].amount, DATA.instructions[0].outputs[0].amount);
             tx.outputs[0].toAddress.should.equal(DATA.instructions[0].outputs[0].address);
             tx.message.should.equal(DATA.memo);
             tx.payProUrl.should.equal('https://bitpay.com/i/LanynqCPoL2JQb8z8s5Z3X');
@@ -4756,10 +4818,10 @@ describe('client API', function() {
         clients[1].doNotVerifyPayPro = true;
         clients[1].getTxProposals({}, (err, txps) => {
           try {
-            should.not.exist(err);
+            should.not.exist(err,err);
             var tx = txps[0];
             // From the hardcoded paypro request
-            tx.outputs[0].amount.should.equal(DATA.instructions[0].outputs[0].amount);
+            checkBig(tx.outputs[0].amount, DATA.instructions[0].outputs[0].amount);
             tx.outputs[0].toAddress.should.equal(DATA.instructions[0].outputs[0].address);
             tx.message.should.equal(DATA.memo);
             tx.payProUrl.should.equal('https://bitpay.com/i/LanynqCPoL2JQb8z8s5Z3X');
@@ -4774,10 +4836,10 @@ describe('client API', function() {
         mockRequest(Buffer.from('broken data'), TestData.payProJsonV2.btc.headers);
         clients[1].doNotVerifyPayPro = true;
         clients[1].getTxProposals({}, (err, txps) => {
-          should.not.exist(err);
+          should.not.exist(err,err);
           let signatures = keys[1].sign(clients[1].getRootPath(), txps[0]);
           clients[1].pushSignatures(txps[0], signatures, (err, txps) => {
-            should.not.exist(err);
+            should.not.exist(err,err);
             done();
           });
         });
@@ -4785,19 +4847,19 @@ describe('client API', function() {
 
       it('Should send the "payment message" when last copayer sign', done => {
         clients[0].getTxProposals({}, (err, txps) => {
-          should.not.exist(err);
+          should.not.exist(err,err);
           let signatures = keys[0].sign(clients[0].getRootPath(), txps[0]);
           clients[0].pushSignatures(txps[0], signatures, (err, xx, paypro) => {
-            should.not.exist(err);
+            should.not.exist(err,err);
             let signatures2 = keys[1].sign(clients[1].getRootPath(), txps[0]);
             clients[1].pushSignatures(xx, signatures2, (err, yy, paypro) => {
-              should.not.exist(err);
+              should.not.exist(err,err);
               yy.status.should.equal('accepted');
               let spy = sinon.spy(Client.PayProV2.request, 'post');
               //              http.onCall(5).yields(null, TestData.payProAckHex);
 
               clients[1].broadcastTxProposal(yy, (err, zz, memo) => {
-                should.not.exist(err);
+                should.not.exist(err,err);
                 spy.called.should.be.true;
                 memo.should.equal(
                   'Payment request for BitPay invoice LanynqCPoL2JQb8z8s5Z3X for merchant BitPay Visa® Load (USD-USA)'
@@ -4814,18 +4876,18 @@ describe('client API', function() {
 
       it('Should send the signed tx in paypro', done => {
         clients[0].getTxProposals({}, (err, txps) => {
-          should.not.exist(err);
+          should.not.exist(err,err);
           let signatures = keys[0].sign(clients[0].getRootPath(), txps[0]);
           clients[0].pushSignatures(txps[0], signatures, (err, xx, paypro) => {
-            should.not.exist(err);
+            should.not.exist(err,err);
             let signatures = keys[1].sign(clients[1].getRootPath(), txps[0]);
             clients[1].pushSignatures(xx, signatures, (err, yy, paypro) => {
-              should.not.exist(err);
+              should.not.exist(err,err);
 
               yy.status.should.equal('accepted');
               let spy = sinon.spy(Client.PayProV2.request, 'post');
               clients[1].broadcastTxProposal(yy, (err, zz, memo) => {
-                should.not.exist(err);
+                should.not.exist(err,err);
                 spy.called.should.be.true;
                 var rawTx = Buffer.from(postArgs[1].transactions[0].tx, 'hex');
                 var tx = new Bitcore.Transaction(rawTx);
@@ -4843,20 +4905,20 @@ describe('client API', function() {
 
       it('Should set bp_partner', done => {
         clients[0].getTxProposals({}, (err, txps) => {
-          should.not.exist(err);
+          should.not.exist(err,err);
           var changeAddress = txps[0].changeAddress.address;
           let signatures = keys[0].sign(clients[0].getRootPath(), txps[0]);
           clients[0].pushSignatures(txps[0], signatures, (err, xx, paypro) => {
-            should.not.exist(err);
+            should.not.exist(err,err);
             let signatures = keys[1].sign(clients[1].getRootPath(), txps[0]);
             clients[1].pushSignatures(xx, signatures, (err, yy, paypro) => {
-              should.not.exist(err);
+              should.not.exist(err,err);
 
               yy.status.should.equal('accepted');
               let spy = sinon.spy(Client.PayProV2.request, 'post');
 
               clients[1].broadcastTxProposal(yy, (err, zz, memo) => {
-                should.not.exist(err);
+                should.not.exist(err,err);
                 spy.called.should.be.true;
                 header.BP_PARTNER.should.equal('xxx');
                 header.BP_PARTNER_VERSION.should.equal('yyy');
@@ -4875,7 +4937,7 @@ describe('client API', function() {
           mockRequest(Buffer.from(TestData.payProJsonV2.btc.body, 'hex'), TestData.payProJsonV2.btc.headers);
           helpers.createAndJoinWallet(clients, keys, 2, 2, { network: 'livenet' }, w => {
             clients[0].createAddress((err, x0) => {
-              should.not.exist(err);
+              should.not.exist(err,err);
               should.exist(x0.address);
               blockchainExplorerMock.setUtxo(x0, 1, 2);
               blockchainExplorerMock.setUtxo(x0, 1, 2);
@@ -4894,7 +4956,7 @@ describe('client API', function() {
                     feePerKb: paypro.requiredFeeRate * 1024
                   },
                   (err, x) => {
-                    should.not.exist(err);
+                    should.not.exist(err,err);
                     resolve();
                   }
                 );
@@ -4906,10 +4968,10 @@ describe('client API', function() {
 
       it('Should Create and Verify a Tx from PayPro', done => {
         clients[1].getTxProposals({}, (err, txps) => {
-          should.not.exist(err);
+          should.not.exist(err,err);
           var tx = txps[0];
 
-          tx.outputs[0].amount.should.equal(DATA.instructions[0].outputs[0].amount);
+          checkBig(tx.outputs[0].amount, DATA.instructions[0].outputs[0].amount);
           tx.outputs[0].toAddress.should.equal(DATA.instructions[0].outputs[0].address);
           tx.message.should.equal(DATA.memo);
           tx.payProUrl.should.equal('https://bitpay.com/i/LanynqCPoL2JQb8z8s5Z3X');
@@ -4922,19 +4984,19 @@ describe('client API', function() {
 
       it('Should send the "payment message" when last copayer sign', done => {
         clients[0].getTxProposals({}, (err, txps) => {
-          should.not.exist(err);
+          should.not.exist(err,err);
           let signatures = keys[0].sign(clients[0].getRootPath(), txps[0]);
           clients[0].pushSignatures(txps[0], signatures, (err, xx, paypro) => {
-            should.not.exist(err);
+            should.not.exist(err,err);
 
             let signatures = keys[1].sign(clients[1].getRootPath(), xx);
             clients[1].pushSignatures(xx, signatures, (err, yy, paypro) => {
-              should.not.exist(err);
+              should.not.exist(err,err);
               yy.status.should.equal('accepted');
               let spy = sinon.spy(Client.PayProV2.request, 'post');
               clients[1].broadcastTxProposal(yy, (err, zz, memo) => {
                 try {
-                  should.not.exist(err);
+                  should.not.exist(err,err);
                   spy.called.should.be.true;
                   postArgs[1].currency.should.equal('BTC');
                   postArgs[1].transactions.length.should.equal(1);
@@ -4959,14 +5021,14 @@ describe('client API', function() {
 
       it('Should NOT fail if requiredFeeRate is not meet', done => {
         clients[0].getTxProposals({}, (err, txps) => {
-          should.not.exist(err);
+          should.not.exist(err,err);
           let signatures = keys[0].sign(clients[0].getRootPath(), txps[0]);
           clients[0].pushSignatures(txps[0], signatures, (err, xx, paypro) => {
-            should.not.exist(err);
+            should.not.exist(err,err);
             xx.feePerKb /= 2;
             let signatures2 = keys[1].sign(clients[1].getRootPath(), xx);
             clients[1].pushSignatures(xx, signatures2, (err, yy, paypro) => {
-              should.not.exist(err);
+              should.not.exist(err,err);
               done();
             });
           });
@@ -4981,7 +5043,7 @@ describe('client API', function() {
           mockRequest(Buffer.from(TestData.payProJsonV2.btc.body, 'hex'), TestData.payProJsonV2.btc.headers);
           helpers.createAndJoinWallet(clients, keys, 1, 1, { network: 'livenet' }, w => {
             clients[0].createAddress((err, x0) => {
-              should.not.exist(err);
+              should.not.exist(err,err);
               should.exist(x0.address);
               blockchainExplorerMock.setUtxo(x0, 1, 2);
               blockchainExplorerMock.setUtxo(x0, 1, 2);
@@ -4998,7 +5060,7 @@ describe('client API', function() {
                     payProUrl: paypro.payProUrl
                   },
                   (err, x) => {
-                    should.not.exist(err);
+                    should.not.exist(err,err);
                     resolve();
                   }
                 );
@@ -5010,14 +5072,14 @@ describe('client API', function() {
 
       it('Should send the signed tx in paypro', done => {
         clients[0].getTxProposals({}, (err, txps) => {
-          should.not.exist(err);
+          should.not.exist(err,err);
           let signatures = keys[0].sign(clients[0].getRootPath(), txps[0]);
           clients[0].pushSignatures(txps[0], signatures, (err, xx, paypro) => {
-            should.not.exist(err);
+            should.not.exist(err,err);
             xx.status.should.equal('accepted');
             let spy = sinon.spy(Client.PayProV2.request, 'post');
             clients[0].broadcastTxProposal(xx, (err, zz, memo) => {
-              should.not.exist(err);
+              should.not.exist(err,err);
               spy.called.should.be.true;
               var rawTx = Buffer.from(postArgs[1].transactions[0].tx, 'hex');
               var tx = new Bitcore.Transaction(rawTx);
@@ -5041,7 +5103,7 @@ describe('client API', function() {
 
           helpers.createAndJoinWallet(clients, keys, 1, 1, { coin: 'bch', network: 'livenet' }, w => {
             clients[0].createAddress(async (err, x0) => {
-              should.not.exist(err);
+              should.not.exist(err,err);
               should.exist(x0.address);
 
               // TODO change createAddress to /v4/, and remove this.
@@ -5065,7 +5127,7 @@ describe('client API', function() {
                       payProUrl: paypro.payProUrl
                     },
                     (err, x) => {
-                      should.not.exist(err);
+                      should.not.exist(err,err);
                       resolve();
                     }
                   );
@@ -5080,15 +5142,15 @@ describe('client API', function() {
 
       it('Should send the signed tx in paypro', done => {
         clients[0].getTxProposals({}, (err, txps) => {
-          should.not.exist(err);
+          should.not.exist(err,err);
           let signatures = keys[0].sign(clients[0].getRootPath(), txps[0]);
           clients[0].pushSignatures(txps[0], signatures, (err, xx, paypro) => {
-            should.not.exist(err);
+            should.not.exist(err,err);
             xx.status.should.equal('accepted');
 
             let spy = sinon.spy(Client.PayProV2.request, 'post');
             clients[0].broadcastTxProposal(xx, (err, zz, memo) => {
-              should.not.exist(err);
+              should.not.exist(err,err);
               spy.called.should.be.true;
               var rawTx = Buffer.from(postArgs[1].transactions[0].tx, 'hex');
               var tx = Bitcore_['bch'].Transaction(rawTx);
@@ -5112,7 +5174,7 @@ describe('client API', function() {
 
           helpers.createAndJoinWallet(clients, keys, 2, 2, { network: 'livenet' }, w => {
             clients[0].createAddress(async (err, x0) => {
-              should.not.exist(err);
+              should.not.exist(err,err);
               should.exist(x0.address);
               blockchainExplorerMock.setUtxo(x0, 1, 2);
               blockchainExplorerMock.setUtxo(x0, 1, 2);
@@ -5134,13 +5196,13 @@ describe('client API', function() {
                     feePerKb: 100e2
                   },
                   (err, txp) => {
-                    should.not.exist(err);
+                    should.not.exist(err,err);
                     clients[0].publishTxProposal(
                       {
                         txp: txp
                       },
                       err => {
-                        should.not.exist(err);
+                        should.not.exist(err,err);
                         resolve();
                       }
                     );
@@ -5154,10 +5216,10 @@ describe('client API', function() {
 
       it('Should Create and Verify a Tx from PayPro', done => {
         clients[1].getTxProposals({}, (err, txps) => {
-          should.not.exist(err);
+          should.not.exist(err,err);
           var tx = txps[0];
           // From the hardcoded paypro request
-          tx.amount.should.equal(DATA.instructions[0].outputs[0].amount);
+          checkBig(tx.amount, DATA.instructions[0].outputs[0].amount);
           tx.outputs[0].toAddress.should.equal(DATA.instructions[0].outputs[0].address);
           tx.message.should.equal(DATA.memo);
           tx.payProUrl.should.equal('dummy');
@@ -5172,7 +5234,7 @@ describe('client API', function() {
       helpers.createAndJoinWallet(clients, keys, 1, 1, {}, w => {
         var id = 'anId';
         clients[0].createAddress((err, x0) => {
-          should.not.exist(err);
+          should.not.exist(err,err);
           should.exist(x0.address);
           blockchainExplorerMock.setUtxo(x0, 1, 2);
           var toAddress = 'n2TBMPzPECGUfcT2EByiTJ12TPZkhN2mN5';
@@ -5187,19 +5249,19 @@ describe('client API', function() {
             txProposalId: id
           };
           clients[0].createTxProposal(opts, (err, txp) => {
-            should.not.exist(err);
+            should.not.exist(err,err);
             should.exist(txp);
             clients[0].publishTxProposal(
               {
                 txp: txp
               },
               (err, publishedTxp) => {
-                should.not.exist(err);
+                should.not.exist(err,err);
                 publishedTxp.id.should.equal(id);
                 clients[0].removeTxProposal(publishedTxp, err => {
                   opts.txProposalId = null;
                   clients[0].createTxProposal(opts, (err, txp) => {
-                    should.not.exist(err);
+                    should.not.exist(err,err);
                     should.exist(txp);
                     txp.id.should.not.equal(id);
                     done();
@@ -5234,7 +5296,7 @@ describe('client API', function() {
       http.yields(null, TestData.payProBuf);
       helpers.createAndJoinWallet(clients, keys, 1, 1, {}, w => {
         clients[0].createAddress((err, x0) => {
-          should.not.exist(err);
+          should.not.exist(err,err);
           should.exist(x0.address);
           blockchainExplorerMock.setUtxo(x0, 1, 1);
           clients[0].payProHttp = clients[1].payProHttp = http;
@@ -5245,22 +5307,22 @@ describe('client API', function() {
 
     var doit = (opts, doNotVerifyPayPro, doBroadcast, done) => {
       helpers.createAndPublishTxProposal(clients[0], opts, (err, x) => {
-        should.not.exist(err);
+        should.not.exist(err,err);
         clients[0].getTx(x.id, (err, x2) => {
-          should.not.exist(err);
+          should.not.exist(err,err);
           x2.creatorName.should.equal('creator');
           x2.message.should.equal('hello');
           x2.outputs[0].toAddress.should.equal(toAddress);
-          x2.outputs[0].amount.should.equal(10000);
+          checkBig(x2.outputs[0].amount, 10000);
           x2.outputs[0].message.should.equal('world');
           clients[0].doNotVerifyPayPro = doNotVerifyPayPro;
           let signatures = keys[0].sign(clients[0].getRootPath(), x2);
           clients[0].pushSignatures(x2, signatures, (err, txp) => {
-            should.not.exist(err);
+            should.not.exist(err,err);
             txp.status.should.equal('accepted');
             if (doBroadcast) {
               clients[0].broadcastTxProposal(txp, (err, txp) => {
-                should.not.exist(err);
+                should.not.exist(err,err);
                 txp.status.should.equal('broadcasted');
                 txp.txid.should.equal(new Bitcore.Transaction(blockchainExplorerMock.lastBroadcasted).id);
                 done();
@@ -5299,7 +5361,7 @@ describe('client API', function() {
     it('Send and broadcast in 1-1 wallet BTC', done => {
       helpers.createAndJoinWallet(clients, keys, 1, 1, {}, w => {
         clients[0].createAddress((err, x0) => {
-          should.not.exist(err);
+          should.not.exist(err,err);
           should.exist(x0.address);
           blockchainExplorerMock.setUtxo(x0, 1, 1);
           var opts = {
@@ -5314,7 +5376,7 @@ describe('client API', function() {
             feePerKb: 100e2
           };
           helpers.createAndPublishTxProposal(clients[0], opts, (err, txp) => {
-            should.not.exist(err);
+            should.not.exist(err,err);
             txp.requiredRejections.should.equal(1);
             txp.requiredSignatures.should.equal(1);
             txp.status.should.equal('pending');
@@ -5323,12 +5385,12 @@ describe('client API', function() {
             txp.message.should.equal('hello');
             let signatures = keys[0].sign(clients[0].getRootPath(), txp);
             clients[0].pushSignatures(txp, signatures, (err, txp) => {
-              should.not.exist(err);
+              should.not.exist(err,err);
               txp.status.should.equal('accepted');
               txp.outputs[0].message.should.equal('output 0');
               txp.message.should.equal('hello');
               clients[0].broadcastTxProposal(txp, (err, txp) => {
-                should.not.exist(err);
+                should.not.exist(err,err);
                 txp.status.should.equal('broadcasted');
                 txp.txid.should.equal(new Bitcore.Transaction(blockchainExplorerMock.lastBroadcasted).id);
                 txp.outputs[0].message.should.equal('output 0');
@@ -5344,7 +5406,7 @@ describe('client API', function() {
     it('Send and broadcast in 1-1 wallet ETH', done => {
       helpers.createAndJoinWallet(clients, keys, 1, 1, { coin: 'eth' }, w => {
         clients[0].createAddress((err, x0) => {
-          should.not.exist(err);
+          should.not.exist(err,err);
           should.exist(x0.address);
           //blockchainExplorerMock.setUtxo(x0, 1, 1);
           var opts = {
@@ -5359,7 +5421,7 @@ describe('client API', function() {
             feePerKb: 100e2
           };
           helpers.createAndPublishTxProposal(clients[0], opts, (err, txp) => {
-            should.not.exist(err);
+            should.not.exist(err,err);
             txp.requiredRejections.should.equal(1);
             txp.requiredSignatures.should.equal(1);
             txp.status.should.equal('pending');
@@ -5367,12 +5429,12 @@ describe('client API', function() {
             txp.message.should.equal('hello');
             let signatures = keys[0].sign(clients[0].getRootPath(), txp);
             clients[0].pushSignatures(txp, signatures, (err, txp) => {
-              should.not.exist(err);
+              should.not.exist(err,err);
               txp.status.should.equal('accepted');
               txp.outputs[0].message.should.equal('output 0');
               txp.message.should.equal('hello');
               clients[0].broadcastTxProposal(txp, (err, txp) => {
-                should.not.exist(err);
+                should.not.exist(err,err);
                 txp.status.should.equal('broadcasted');
                 txp.txid.should.contain('0x');
                 txp.message.should.equal('hello');
@@ -5387,7 +5449,7 @@ describe('client API', function() {
     it('Send and broadcast in 2-3 wallet', done => {
       helpers.createAndJoinWallet(clients, keys, 2, 3, {}, w => {
         clients[0].createAddress((err, x0) => {
-          should.not.exist(err);
+          should.not.exist(err,err);
           should.exist(x0.address);
           blockchainExplorerMock.setUtxo(x0, 10, 2);
           var opts = {
@@ -5396,9 +5458,9 @@ describe('client API', function() {
             message: 'hello'
           };
           helpers.createAndPublishTxProposal(clients[0], opts, (err, txp) => {
-            should.not.exist(err);
+            should.not.exist(err,err);
             clients[0].getStatus({}, (err, st) => {
-              should.not.exist(err);
+              should.not.exist(err,err);
               var txp = st.pendingTxps[0];
               txp.status.should.equal('pending');
               txp.requiredRejections.should.equal(2);
@@ -5407,15 +5469,15 @@ describe('client API', function() {
               w.copayers.length.should.equal(3);
               w.status.should.equal('complete');
               var b = st.balance;
-              b.totalAmount.should.equal(1000000000);
-              b.lockedAmount.should.equal(1000000000);
+              checkBig(b.totalAmount, 1000000000);
+              checkBig(b.lockedAmount, 1000000000);
               let signatures = keys[0].sign(clients[0].getRootPath(), txp);
               clients[0].pushSignatures(txp, signatures, (err, txp) => {
                 should.not.exist(err, err);
                 txp.status.should.equal('pending');
                 let signatures = keys[1].sign(clients[1].getRootPath(), txp);
                 clients[1].pushSignatures(txp, signatures, (err, txp) => {
-                  should.not.exist(err);
+                  should.not.exist(err,err);
                   txp.status.should.equal('accepted');
                   clients[1].broadcastTxProposal(txp, (err, txp) => {
                     txp.status.should.equal('broadcasted');
@@ -5433,7 +5495,7 @@ describe('client API', function() {
     it('Send, reject actions in 2-3 wallet must have correct copayerNames', done => {
       helpers.createAndJoinWallet(clients, keys, 2, 3, {}, w => {
         clients[0].createAddress((err, x0) => {
-          should.not.exist(err);
+          should.not.exist(err,err);
           blockchainExplorerMock.setUtxo(x0, 10, 2);
           var opts = {
             amount: 10000,
@@ -5441,12 +5503,12 @@ describe('client API', function() {
             message: 'hello 1-1'
           };
           helpers.createAndPublishTxProposal(clients[0], opts, (err, txp) => {
-            should.not.exist(err);
+            should.not.exist(err,err);
             clients[0].rejectTxProposal(txp, 'wont sign', (err, txp) => {
               should.not.exist(err, err);
               let signatures = keys[1].sign(clients[1].getRootPath(), txp);
               clients[1].pushSignatures(txp, signatures, (err, txp) => {
-                should.not.exist(err);
+                should.not.exist(err,err);
                 done();
               });
             });
@@ -5458,7 +5520,7 @@ describe('client API', function() {
     it('Send, reject, 2 signs and broadcast in 2-3 wallet', done => {
       helpers.createAndJoinWallet(clients, keys, 2, 3, {}, w => {
         clients[0].createAddress((err, x0) => {
-          should.not.exist(err);
+          should.not.exist(err,err);
           should.exist(x0.address);
           blockchainExplorerMock.setUtxo(x0, 10, 2);
           var opts = {
@@ -5467,7 +5529,7 @@ describe('client API', function() {
             message: 'hello 1-1'
           };
           helpers.createAndPublishTxProposal(clients[0], opts, (err, txp) => {
-            should.not.exist(err);
+            should.not.exist(err,err);
             txp.status.should.equal('pending');
             txp.requiredRejections.should.equal(2);
             txp.requiredSignatures.should.equal(2);
@@ -5476,10 +5538,10 @@ describe('client API', function() {
               txp.status.should.equal('pending');
               let signatures = keys[1].sign(clients[1].getRootPath(), txp);
               clients[1].pushSignatures(txp, signatures, (err, txp) => {
-                should.not.exist(err);
+                should.not.exist(err,err);
                 let signatures = keys[2].sign(clients[2].getRootPath(), txp);
                 clients[2].pushSignatures(txp, signatures, (err, txp) => {
-                  should.not.exist(err);
+                  should.not.exist(err,err);
                   txp.status.should.equal('accepted');
                   clients[2].broadcastTxProposal(txp, (err, txp) => {
                     txp.status.should.equal('broadcasted');
@@ -5497,7 +5559,7 @@ describe('client API', function() {
     it('Send, reject in 3-4 wallet', done => {
       helpers.createAndJoinWallet(clients, keys, 3, 4, {}, w => {
         clients[0].createAddress((err, x0) => {
-          should.not.exist(err);
+          should.not.exist(err,err);
           should.exist(x0.address);
           blockchainExplorerMock.setUtxo(x0, 10, 3);
           var opts = {
@@ -5506,7 +5568,7 @@ describe('client API', function() {
             message: 'hello 1-1'
           };
           helpers.createAndPublishTxProposal(clients[0], opts, (err, txp) => {
-            should.not.exist(err);
+            should.not.exist(err,err);
             txp.status.should.equal('pending');
             txp.requiredRejections.should.equal(2);
             txp.requiredSignatures.should.equal(3);
@@ -5516,10 +5578,10 @@ describe('client API', function() {
               txp.status.should.equal('pending');
               let signatures = keys[1].sign(clients[1].getRootPath(), txp);
               clients[1].pushSignatures(txp, signatures, (err, txp) => {
-                should.not.exist(err);
+                should.not.exist(err,err);
                 txp.status.should.equal('pending');
                 clients[2].rejectTxProposal(txp, 'me neither', (err, txp) => {
-                  should.not.exist(err);
+                  should.not.exist(err,err);
                   txp.status.should.equal('rejected');
                   done();
                 });
@@ -5533,7 +5595,7 @@ describe('client API', function() {
     it('Should not allow to reject or sign twice', done => {
       helpers.createAndJoinWallet(clients, keys, 2, 3, {}, w => {
         clients[0].createAddress((err, x0) => {
-          should.not.exist(err);
+          should.not.exist(err,err);
           should.exist(x0.address);
           blockchainExplorerMock.setUtxo(x0, 10, 2);
           var opts = {
@@ -5542,19 +5604,19 @@ describe('client API', function() {
             message: 'hello 1-1'
           };
           helpers.createAndPublishTxProposal(clients[0], opts, (err, txp) => {
-            should.not.exist(err);
+            should.not.exist(err,err);
             txp.status.should.equal('pending');
             txp.requiredRejections.should.equal(2);
             txp.requiredSignatures.should.equal(2);
             let signatures = keys[0].sign(clients[0].getRootPath(), txp);
             clients[0].pushSignatures(txp, signatures, (err, txp) => {
-              should.not.exist(err);
+              should.not.exist(err,err);
               txp.status.should.equal('pending');
               clients[0].pushSignatures(txp, signatures, err => {
                 should.exist(err);
                 err.should.be.an.instanceOf(Errors.COPAYER_VOTED);
                 clients[1].rejectTxProposal(txp, 'xx', (err, txp) => {
-                  should.not.exist(err);
+                  should.not.exist(err,err);
                   clients[1].rejectTxProposal(txp, 'xx', err => {
                     should.exist(err);
                     err.should.be.an.instanceOf(Errors.COPAYER_VOTED);
@@ -5567,6 +5629,41 @@ describe('client API', function() {
         });
       });
     });
+
+// TODO
+    describe("BigInt", () => {
+      it('Send and broadcast in 1-1 wallet ETH', done => {
+        helpers.createAndJoinWallet(clients, keys, 1, 1, { coin: 'eth' }, w => {
+          clients[0].createAddress((err, x0) => {
+            should.not.exist(err,err);
+            //should.exist(x0.address);
+            blockchainExplorerMock.setBalance({
+              confirmed:  9123456789012345678901234567890n,
+              unconfirmed: 0,
+            });
+            var opts = {
+              outputs: [
+                {
+                  amount: 123456789012345678901234567890,
+                  toAddress: '0x37d7B3bBD88EFdE6a93cF74D2F5b0385D3E3B08A',
+                  message: 'output 0'
+                }
+              ],
+              message: 'hello',
+              feePerKb: 100e2
+            };
+            helpers.createAndPublishTxProposal(clients[0], opts, (err, txp) => {
+              should.not.exist(err,err);
+              txp.amount.should.equal(1);
+              txp.status.should.equal('pending');
+              done();
+            });
+          });
+        });
+      });
+    });
+
+
   });
 
   describe('Broadcast raw transaction', () => {
@@ -5578,7 +5675,7 @@ describe('client API', function() {
             '0100000001b1b1b1b0d9786e237ec6a4b80049df9e926563fee7bdbc1ac3c4efc3d0af9a1c010000006a47304402207c612d36d0132ed463526a4b2370de60b0aa08e76b6f370067e7915c2c74179b02206ae8e3c6c84cee0bca8521704eddb40afe4590f14fd5d6434da980787ba3d5110121031be732b984b0f1f404840f2479bcc81f90187298efecc67dd83e1f93d9b2860dfeffffff0200ab9041000000001976a91403383bd4cff200de3690db1ed17d0b1a228ea43f88ac25ad6ed6190000001976a9147ccbaf7bcc1e323548bd1d57d7db03f6e6daf76a88acaec70700'
         };
         clients[0].broadcastRawTx(opts, (err, txid) => {
-          should.not.exist(err);
+          should.not.exist(err,err);
           txid.should.equal('d19871cf7c123d413ac71f9240ea234fac77bc95bcf41015d8bf5c03f221b92c');
           done();
         });
@@ -5591,10 +5688,10 @@ describe('client API', function() {
       blockchainExplorerMock.setHistory(createTxsV8(2, 1000));
       helpers.createAndJoinWallet(clients, keys, 1, 1, {}, w => {
         clients[0].createAddress((err, x0) => {
-          should.not.exist(err);
+          should.not.exist(err,err);
           should.exist(x0.address);
           clients[0].getTxHistory({}, (err, txs) => {
-            should.not.exist(err);
+            should.not.exist(err,err);
             should.exist(txs);
             txs.length.should.equal(2);
             done();
@@ -5606,7 +5703,7 @@ describe('client API', function() {
       blockchainExplorerMock.setHistory([]);
       helpers.createAndJoinWallet(clients, keys, 1, 1, {}, w => {
         clients[0].getTxHistory({}, (err, txs) => {
-          should.not.exist(err);
+          should.not.exist(err,err);
           should.exist(txs);
           txs.length.should.equal(0);
           done();
@@ -5620,7 +5717,7 @@ describe('client API', function() {
           next => {
             helpers.createAndJoinWallet(clients, keys, 2, 3, {}, w => {
               clients[0].createAddress((err, address) => {
-                should.not.exist(err);
+                should.not.exist(err,err);
                 should.exist(address);
                 next(null, address);
               });
@@ -5634,18 +5731,18 @@ describe('client API', function() {
               message: 'some message'
             };
             helpers.createAndPublishTxProposal(clients[0], opts, (err, txp) => {
-              should.not.exist(err);
+              should.not.exist(err,err);
               clients[1].rejectTxProposal(txp, 'some reason', (err, txp) => {
-                should.not.exist(err);
+                should.not.exist(err,err);
                 let signatures = keys[2].sign(clients[2].getRootPath(), txp);
                 clients[2].pushSignatures(txp, signatures, (err, txp) => {
-                  should.not.exist(err);
+                  should.not.exist(err,err);
                   let signatures = keys[0].sign(clients[0].getRootPath(), txp);
                   clients[0].pushSignatures(txp, signatures, (err, txp) => {
-                    should.not.exist(err);
+                    should.not.exist(err,err);
                     txp.status.should.equal('accepted');
                     clients[0].broadcastTxProposal(txp, (err, txp) => {
-                      should.not.exist(err);
+                      should.not.exist(err,err);
                       txp.status.should.equal('broadcasted');
                       next(null, txp);
                     });
@@ -5673,7 +5770,7 @@ describe('client API', function() {
             });
             blockchainExplorerMock.setHistory(history);
             clients[0].getTxHistory({}, (err, txs) => {
-              should.not.exist(err);
+              should.not.exist(err,err);
               should.exist(txs);
               txs.length.should.equal(2);
               var decorated = _.find(txs, {
@@ -5698,7 +5795,7 @@ describe('client API', function() {
           }
         ],
         err => {
-          should.not.exist(err);
+          should.not.exist(err,err);
           done();
         }
       );
@@ -5743,7 +5840,7 @@ describe('client API', function() {
         blockchainExplorerMock.setHistory(txs);
         helpers.createAndJoinWallet(clients, keys, 1, 1, {}, w => {
           clients[0].createAddress((err, x0) => {
-            should.not.exist(err);
+            should.not.exist(err,err);
             should.exist(x0.address);
             done();
           });
@@ -5752,7 +5849,7 @@ describe('client API', function() {
       _.each(testCases, testCase => {
         it(`should skip ${testCase.opts.skip} limit ${testCase.opts.limit}`, done => {
           clients[0].getTxHistory(testCase.opts, (err, txs) => {
-            should.not.exist(err);
+            should.not.exist(err,err);
             should.exist(txs);
             var times = _.map(txs, 'time');
             times.should.deep.equal(testCase.expected);
@@ -5777,7 +5874,7 @@ describe('client API', function() {
           body: 'note body'
         },
         (err, note) => {
-          should.not.exist(err);
+          should.not.exist(err,err);
           should.exist(note);
           note.body.should.equal('note body');
           clients[0].getTxNote(
@@ -5785,7 +5882,7 @@ describe('client API', function() {
               txid: '123'
             },
             (err, note) => {
-              should.not.exist(err);
+              should.not.exist(err,err);
               should.exist(note);
               note.txid.should.equal('123');
               note.walletId.should.equal(clients[0].credentials.walletId);
@@ -5807,7 +5904,7 @@ describe('client API', function() {
           body: 'a random note'
         },
         err => {
-          should.not.exist(err);
+          should.not.exist(err,err);
           var url = spy.getCall(0).args[0];
           var body = JSON.stringify(spy.getCall(0).args[1]);
           url.should.contain('/txnotes');
@@ -5825,13 +5922,13 @@ describe('client API', function() {
           body: 'note body'
         },
         err => {
-          should.not.exist(err);
+          should.not.exist(err,err);
           clients[0].getTxNote(
             {
               txid: '123'
             },
             (err, note) => {
-              should.not.exist(err);
+              should.not.exist(err,err);
               should.exist(note);
               note.editedBy.should.equal(clients[0].credentials.copayerId);
               var creator = note.editedBy;
@@ -5840,7 +5937,7 @@ describe('client API', function() {
                   txid: '123'
                 },
                 (err, note) => {
-                  should.not.exist(err);
+                  should.not.exist(err,err);
                   should.exist(note);
                   note.body.should.equal('note body');
                   note.editedBy.should.equal(creator);
@@ -5858,7 +5955,7 @@ describe('client API', function() {
         [
           next => {
             clients[0].getTxNotes({}, (err, notes) => {
-              should.not.exist(err);
+              should.not.exist(err,err);
               notes.should.be.empty;
               next();
             });
@@ -5878,7 +5975,7 @@ describe('client API', function() {
                 minTs: 0
               },
               (err, notes) => {
-                should.not.exist(err);
+                should.not.exist(err,err);
                 notes.length.should.equal(1);
                 notes[0].txid.should.equal('123');
                 next();
@@ -5901,7 +5998,7 @@ describe('client API', function() {
                 minTs: 0
               },
               (err, notes) => {
-                should.not.exist(err);
+                should.not.exist(err,err);
                 notes.length.should.equal(2);
                 _.difference(_.map(notes, 'txid'), ['123', '456']).should.be.empty;
                 next();
@@ -5914,7 +6011,7 @@ describe('client API', function() {
                 minTs: 50
               },
               (err, notes) => {
-                should.not.exist(err);
+                should.not.exist(err,err);
                 notes.length.should.equal(1);
                 notes[0].txid.should.equal('456');
                 next();
@@ -5937,7 +6034,7 @@ describe('client API', function() {
                 minTs: 100
               },
               (err, notes) => {
-                should.not.exist(err);
+                should.not.exist(err,err);
                 notes.length.should.equal(1);
                 notes[0].txid.should.equal('123');
                 notes[0].body.should.equal('an edit');
@@ -5947,14 +6044,14 @@ describe('client API', function() {
           },
           next => {
             clients[0].getTxNotes({}, (err, notes) => {
-              should.not.exist(err);
+              should.not.exist(err,err);
               notes.length.should.equal(2);
               next();
             });
           }
         ],
         err => {
-          should.not.exist(err);
+          should.not.exist(err,err);
           clock.restore();
           done();
         }
@@ -6052,7 +6149,7 @@ describe('client API', function() {
           importedClient = null;
           helpers.createAndJoinWallet(clients, keys, 1, 1, {}, () => {
             clients[0].createAddress((err, addr) => {
-              should.not.exist(err);
+              should.not.exist(err,err);
               should.exist(addr.address);
               address = addr.address;
               done();
@@ -6062,7 +6159,7 @@ describe('client API', function() {
         afterEach(done => {
           if (!importedClient) return done();
           importedClient.getMainAddresses({}, (err, list) => {
-            should.not.exist(err);
+            should.not.exist(err,err);
             should.exist(list);
             list.length.should.equal(1);
             list[0].address.should.equal(address);
@@ -6130,7 +6227,7 @@ describe('client API', function() {
           var c2 = importedClient.credentials;
           c2.xPubKey.should.equal(pub);
           importedClient.openWallet(err => {
-            should.not.exist(err);
+            should.not.exist(err,err);
             c2.walletId.should.equal(walletId);
             c2.walletName.should.equal(walletName);
             c2.copayerName.should.equal(copayerName);
@@ -6152,9 +6249,9 @@ describe('client API', function() {
               network: 'livenet'
             },
             err => {
-              should.not.exist(err);
+              should.not.exist(err,err);
               clients[0].createAddress((err, addr) => {
-                should.not.exist(err);
+                should.not.exist(err,err);
                 address = addr.address;
                 done();
               });
@@ -6168,7 +6265,7 @@ describe('client API', function() {
         afterEach(done => {
           if (!importedClient) return done();
           importedClient.getMainAddresses({}, (err, list) => {
-            should.not.exist(err);
+            should.not.exist(err,err);
             should.exist(list);
             list.length.should.equal(1);
             list[0].address.should.equal(address);
@@ -6181,11 +6278,11 @@ describe('client API', function() {
                   clients[0].credentials.xPubKey.toString().should.equal('xpub6CLj2x8T5zwngq3Uq42PbXbAXnyaUtsANEZaBjAPNBn5PbhSJM29DM5nhrdJDNpEy9X3n5sQhk6CNA7PKTp48Xvq3QFdiYAXAcaWEJ6Xmug');
                   setup(() =>{
                     let k2 = Key.fromMnemonicAndServer('pink net pet stove boy receive task nephew book spawn pull regret', { client: helpers.newClient(app)}, (err, clients) => {
-                      should.not.exist(err);
+                      should.not.exist(err,err);
                       clients.length.should.equal(1);
                       importedClient = clients[0];
                       importedClient.openWallet((err) =>{
-                        should.not.exist(err);
+                        should.not.exist(err,err);
                         done();
                       });
         */
@@ -6229,7 +6326,7 @@ describe('client API', function() {
               })
             );
             importedClient.openWallet(err => {
-              should.not.exist(err);
+              should.not.exist(err,err);
               done();
             });
           });
@@ -6287,7 +6384,7 @@ describe('client API', function() {
           return 'xxxx';
         };
         clients[0].validateKeyDerivation({}, (err, isValid) => {
-          should.not.exist(err);
+          should.not.exist(err,err);
           isValid.should.be.false;
           clients[0].keyDerivationOk.should.be.false;
           Utils.signMessage = x;
@@ -6297,7 +6394,7 @@ describe('client API', function() {
 
       it('should validate key derivation', done => {
         clients[0].validateKeyDerivation({}, (err, isValid) => {
-          should.not.exist(err);
+          should.not.exist(err,err);
           isValid.should.be.true;
           clients[0].keyDerivationOk.should.be.true;
           done();
@@ -6343,7 +6440,7 @@ describe('client API', function() {
           var copayerName = clients[0].credentials.copayerName;
 
           clients[0].createAddress((err, addr) => {
-            should.not.exist(err);
+            should.not.exist(err,err);
             should.exist(addr);
             Client.serverAssistedImport(
               { words },
@@ -6353,15 +6450,15 @@ describe('client API', function() {
                 }
               },
               (err, k, c) => {
-                should.not.exist(err);
+                should.not.exist(err,err);
                 c.length.should.equal(1);
                 let recoveryClient = c[0];
                 recoveryClient.openWallet(err => {
-                  should.not.exist(err);
+                  should.not.exist(err,err);
                   recoveryClient.credentials.walletName.should.equal(walletName);
                   recoveryClient.credentials.copayerName.should.equal(copayerName);
                   recoveryClient.getMainAddresses({}, (err, list) => {
-                    should.not.exist(err);
+                    should.not.exist(err,err);
                     should.exist(list);
                     list[0].address.should.equal(addr.address);
                     done();
@@ -6387,7 +6484,7 @@ describe('client API', function() {
               ]
             },
             err => {
-              should.not.exist(err);
+              should.not.exist(err,err);
               Client.serverAssistedImport(
                 { words },
                 {
@@ -6400,13 +6497,13 @@ describe('client API', function() {
                   c.length.should.equal(3);
                   let recoveryClient = c[0];
                   recoveryClient.openWallet(err => {
-                    should.not.exist(err);
+                    should.not.exist(err,err);
                     recoveryClient.credentials.walletName.should.equal(walletName);
                     recoveryClient.credentials.copayerName.should.equal(copayerName);
                     recoveryClient.credentials.coin.should.equal('eth');
                     let recoveryClient2 = c[2];
                     recoveryClient2.openWallet(err => {
-                      should.not.exist(err);
+                      should.not.exist(err,err);
                       recoveryClient2.credentials.coin.should.equal('gusd');
                       done();
                     });
@@ -6425,7 +6522,7 @@ describe('client API', function() {
           var copayerName = clients[0].credentials.copayerName;
 
           clients[0].savePreferences({ tokenAddresses: ['0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48'] }, err => {
-            should.not.exist(err);
+            should.not.exist(err,err);
             Client.serverAssistedImport(
               { words },
               {
@@ -6438,13 +6535,13 @@ describe('client API', function() {
                 c.length.should.equal(2);
                 let recoveryClient = c[0];
                 recoveryClient.openWallet(err => {
-                  should.not.exist(err);
+                  should.not.exist(err,err);
                   recoveryClient.credentials.walletName.should.equal(walletName);
                   recoveryClient.credentials.copayerName.should.equal(copayerName);
                   recoveryClient.credentials.coin.should.equal('eth');
                   let recoveryClient2 = c[1];
                   recoveryClient2.openWallet(err => {
-                    should.not.exist(err);
+                    should.not.exist(err,err);
                     recoveryClient2.credentials.coin.should.equal('usdc');
                     done();
                   });
@@ -6463,7 +6560,7 @@ describe('client API', function() {
             var walletName = clients[0].credentials.walletName;
             var copayerName = clients[0].credentials.copayerName;
             clients[0].createAddress((err, addr) => {
-              should.not.exist(err);
+              should.not.exist(err,err);
               should.exist(addr);
               Client.serverAssistedImport(
                 { words },
@@ -6473,7 +6570,7 @@ describe('client API', function() {
                   }
                 },
                 (err, k, c) => {
-                  should.not.exist(err);
+                  should.not.exist(err,err);
                   c.length.should.equal(2);
                   c[0].credentials.coin.should.equal('btc');
                   c[1].credentials.coin.should.equal('bch');
@@ -6481,11 +6578,11 @@ describe('client API', function() {
 
                   let recoveryClient = c[1];
                   recoveryClient.openWallet(err => {
-                    should.not.exist(err);
+                    should.not.exist(err,err);
                     recoveryClient.credentials.walletName.should.equal(walletName);
                     recoveryClient.credentials.copayerName.should.equal(copayerName);
                     recoveryClient.getMainAddresses({}, (err, list) => {
-                      should.not.exist(err);
+                      should.not.exist(err,err);
                       should.exist(list);
                       list[0].address.should.equal(addr.address);
                       done();
@@ -6506,7 +6603,7 @@ describe('client API', function() {
             var walletName = clients[0].credentials.walletName;
             var copayerName = clients[0].credentials.copayerName;
             clients[0].createAddress((err, addr) => {
-              should.not.exist(err);
+              should.not.exist(err,err);
               should.exist(addr);
               Client.serverAssistedImport(
                 { words },
@@ -6516,18 +6613,18 @@ describe('client API', function() {
                   }
                 },
                 (err, k, c) => {
-                  should.not.exist(err);
+                  should.not.exist(err,err);
                   c.length.should.equal(2);
                   c[0].credentials.coin.should.equal('btc');
                   c[1].credentials.coin.should.equal('bch');
                   c[0].credentials.copayerId.should.not.equal(c[1].credentials.copayerId);
                   let recoveryClient = c[1];
                   recoveryClient.openWallet(err => {
-                    should.not.exist(err);
+                    should.not.exist(err,err);
                     recoveryClient.credentials.walletName.should.equal(walletName);
                     recoveryClient.credentials.copayerName.should.equal(copayerName);
                     recoveryClient.getMainAddresses({}, (err, list) => {
-                      should.not.exist(err);
+                      should.not.exist(err,err);
                       should.exist(list);
                       list[0].address.should.equal(addr.address);
                       done();
@@ -6547,7 +6644,7 @@ describe('client API', function() {
           var walletName = clients[0].credentials.walletName;
           var copayerName = clients[0].credentials.copayerName;
           clients[0].createAddress((err, addr) => {
-            should.not.exist(err);
+            should.not.exist(err,err);
             should.exist(addr);
             Client.serverAssistedImport(
               { words, passphrase },
@@ -6557,16 +6654,16 @@ describe('client API', function() {
                 }
               },
               (err, k, c) => {
-                should.not.exist(err);
+                should.not.exist(err,err);
                 c.length.should.equal(1);
 
                 let recoveryClient = c[0];
                 recoveryClient.openWallet(err => {
-                  should.not.exist(err);
+                  should.not.exist(err,err);
                   recoveryClient.credentials.walletName.should.equal(walletName);
                   recoveryClient.credentials.copayerName.should.equal(copayerName);
                   recoveryClient.getMainAddresses({}, (err, list) => {
-                    should.not.exist(err);
+                    should.not.exist(err,err);
                     should.exist(list);
                     list[0].address.should.equal(addr.address);
                     done();
@@ -6584,7 +6681,7 @@ describe('client API', function() {
           var walletName = clients[0].credentials.walletName;
           var copayerName = clients[0].credentials.copayerName;
           clients[0].createAddress((err, addr) => {
-            should.not.exist(err);
+            should.not.exist(err,err);
             should.exist(addr);
             Client.serverAssistedImport(
               { xPrivKey },
@@ -6599,15 +6696,15 @@ describe('client API', function() {
                 k.compliantDerivation.should.equal(true);
                 k.use0forBCH.should.equal(false);
                 k.use44forMultisig.should.equal(false);
-                should.not.exist(err);
+                should.not.exist(err,err);
                 c.length.should.equal(1);
                 let recoveryClient = c[0];
                 recoveryClient.openWallet(err => {
-                  should.not.exist(err);
+                  should.not.exist(err,err);
                   recoveryClient.credentials.walletName.should.equal(walletName);
                   recoveryClient.credentials.copayerName.should.equal(copayerName);
                   recoveryClient.getMainAddresses({}, (err, list) => {
-                    should.not.exist(err);
+                    should.not.exist(err,err);
                     should.exist(list);
                     list[0].address.should.equal(addr.address);
                     done();
@@ -6625,7 +6722,7 @@ describe('client API', function() {
           var walletName = clients[0].credentials.walletName;
           var copayerName = clients[0].credentials.copayerName;
           clients[0].createAddress((err, addr) => {
-            should.not.exist(err);
+            should.not.exist(err,err);
             should.exist(addr);
             Client.serverAssistedImport(
               { words },
@@ -6638,17 +6735,17 @@ describe('client API', function() {
                 k.compliantDerivation.should.equal(true);
                 k.use0forBCH.should.equal(false);
                 k.use44forMultisig.should.equal(false);
-                should.not.exist(err);
+                should.not.exist(err,err);
                 c.length.should.equal(1);
                 let recoveryClient = c[0];
                 recoveryClient.openWallet(err => {
-                  should.not.exist(err);
+                  should.not.exist(err,err);
                   recoveryClient.credentials.walletName.should.equal(walletName);
                   recoveryClient.credentials.copayerName.should.equal(copayerName);
                   recoveryClient.credentials.m.should.equal(2);
                   recoveryClient.credentials.n.should.equal(2);
                   recoveryClient.getMainAddresses({}, (err, list) => {
-                    should.not.exist(err);
+                    should.not.exist(err,err);
                     should.exist(list);
                     list[0].address.should.equal(addr.address);
                     done();
@@ -6672,7 +6769,7 @@ describe('client API', function() {
               }
             },
             (err, k, c) => {
-              should.not.exist(err);
+              should.not.exist(err,err);
               c.length.should.equal(0);
               done();
             }
@@ -6694,7 +6791,7 @@ describe('client API', function() {
             var walletName = clients[0].credentials.walletName;
             var copayerName = clients[0].credentials.copayerName;
             clients[0].createAddress((err, addr) => {
-              should.not.exist(err);
+              should.not.exist(err,err);
               should.exist(addr);
               Client.serverAssistedImport(
                 { words },
@@ -6710,17 +6807,17 @@ describe('client API', function() {
                   k.use0forBCH.should.equal(false);
                   k.use44forMultisig.should.equal(true);
 
-                  should.not.exist(err);
+                  should.not.exist(err,err);
                   c.length.should.equal(1);
                   let recoveryClient = c[0];
                   recoveryClient.openWallet(err => {
-                    should.not.exist(err);
+                    should.not.exist(err,err);
                     recoveryClient.credentials.walletName.should.equal(walletName);
                     recoveryClient.credentials.copayerName.should.equal(copayerName);
                     recoveryClient.credentials.m.should.equal(2);
                     recoveryClient.credentials.n.should.equal(2);
                     recoveryClient.getMainAddresses({}, (err, list) => {
-                      should.not.exist(err);
+                      should.not.exist(err,err);
                       should.exist(list);
                       list[0].address.should.equal(addr.address);
                       done();
@@ -6748,7 +6845,7 @@ describe('client API', function() {
             var walletName = clients[0].credentials.walletName;
             var copayerName = clients[0].credentials.copayerName;
             clients[0].createAddress((err, addr) => {
-              should.not.exist(err);
+              should.not.exist(err,err);
               should.exist(addr);
               Client.serverAssistedImport(
                 { words },
@@ -6764,17 +6861,17 @@ describe('client API', function() {
                   k.use0forBCH.should.equal(false);
                   k.use44forMultisig.should.equal(true);
 
-                  should.not.exist(err);
+                  should.not.exist(err,err);
                   c.length.should.equal(1);
                   let recoveryClient = c[0];
                   recoveryClient.openWallet(err => {
-                    should.not.exist(err);
+                    should.not.exist(err,err);
                     recoveryClient.credentials.walletName.should.equal(walletName);
                     recoveryClient.credentials.copayerName.should.equal(copayerName);
                     recoveryClient.credentials.m.should.equal(2);
                     recoveryClient.credentials.n.should.equal(3);
                     recoveryClient.getMainAddresses({}, (err, list) => {
-                      should.not.exist(err);
+                      should.not.exist(err,err);
                       should.exist(list);
                       list[0].address.should.equal(addr.address);
                       done();
@@ -6792,7 +6889,7 @@ describe('client API', function() {
           var xPrivKey = keys[0].get().xPrivKey;
           var walletName = clients[0].credentials.walletName;
           clients[0].createAddress((err, x0) => {
-            should.not.exist(err);
+            should.not.exist(err,err);
             should.exist(x0.address);
             blockchainExplorerMock.setUtxo(x0, 1, 1, 0);
             var opts = {
@@ -6801,7 +6898,7 @@ describe('client API', function() {
               message: 'hello'
             };
             helpers.createAndPublishTxProposal(clients[0], opts, (err, x) => {
-              should.not.exist(err);
+              should.not.exist(err,err);
 
               Client.serverAssistedImport(
                 { xPrivKey },
@@ -6811,14 +6908,14 @@ describe('client API', function() {
                   }
                 },
                 (err, k, c) => {
-                  should.not.exist(err);
+                  should.not.exist(err,err);
                   c.length.should.equal(1);
                   let recoveryClient = c[0];
                   recoveryClient.openWallet(err => {
-                    should.not.exist(err);
+                    should.not.exist(err,err);
                     recoveryClient.credentials.walletName.should.equal(walletName);
                     recoveryClient.getTx(x.id, (err, x2) => {
-                      should.not.exist(err);
+                      should.not.exist(err,err);
                       x2.message.should.equal(opts.message);
                       done();
                     });
@@ -6833,7 +6930,7 @@ describe('client API', function() {
       it('should be able to recreate wallet 2-2', done => {
         helpers.createAndJoinWallet(clients, keys, 2, 2, {}, () => {
           clients[0].createAddress((err, addr) => {
-            should.not.exist(err);
+            should.not.exist(err,err);
             should.exist(addr);
 
             var storage = new Storage({
@@ -6860,7 +6957,7 @@ describe('client API', function() {
                   err.should.be.an.instanceOf(Errors.NOT_AUTHORIZED);
                   var spy = sinon.spy(recoveryClient.request, 'post');
                   recoveryClient.recreateWallet(err => {
-                    should.not.exist(err);
+                    should.not.exist(err,err);
 
                     // Do not send wallet name and copayer names in clear text
                     var url = spy.getCall(0).args[0];
@@ -6874,13 +6971,13 @@ describe('client API', function() {
                     body.should.not.contain('copayer 1');
 
                     recoveryClient.getStatus({}, (err, status) => {
-                      should.not.exist(err);
+                      should.not.exist(err,err);
                       status.wallet.name.should.equal('mywallet');
                       _.difference(_.map(status.wallet.copayers, 'name'), ['creator', 'copayer 1']).length.should.equal(
                         0
                       );
                       recoveryClient.createAddress((err, addr2) => {
-                        should.not.exist(err);
+                        should.not.exist(err,err);
                         should.exist(addr2);
                         addr2.address.should.equal(addr.address);
                         addr2.path.should.equal(addr.path);
@@ -6888,7 +6985,7 @@ describe('client API', function() {
                         var recoveryClient2 = helpers.newClient(newApp);
                         recoveryClient2.fromString(clients[1].toString());
                         recoveryClient2.getStatus({}, (err, status) => {
-                          should.not.exist(err);
+                          should.not.exist(err,err);
                           done();
                         });
                       });
@@ -6905,7 +7002,7 @@ describe('client API', function() {
         this.timeout(10000);
         helpers.createAndJoinWallet(clients, keys, 2, 2, {}, () => {
           clients[0].createAddress((err, addr) => {
-            should.not.exist(err);
+            should.not.exist(err,err);
             should.exist(addr);
             blockchainExplorerMock.setUtxo(addr, 1, 2);
 
@@ -6930,11 +7027,11 @@ describe('client API', function() {
                   should.exist(err);
                   err.should.be.an.instanceOf(Errors.NOT_AUTHORIZED);
                   recoveryClient.recreateWallet(err => {
-                    should.not.exist(err);
+                    should.not.exist(err,err);
                     recoveryClient.getStatus({}, (err, status) => {
-                      should.not.exist(err);
+                      should.not.exist(err,err);
                       recoveryClient.startScan({}, err => {
-                        should.not.exist(err);
+                        should.not.exist(err,err);
                         var balance = 0;
                         async.whilst(
                           () => {
@@ -6949,7 +7046,7 @@ describe('client API', function() {
                             }, 200);
                           },
                           err => {
-                            should.not.exist(err);
+                            should.not.exist(err,err);
                             balance.should.equal(1e8);
                             done();
                           }
@@ -6967,7 +7064,7 @@ describe('client API', function() {
       it('should be able call recreate wallet twice', done => {
         helpers.createAndJoinWallet(clients, keys, 2, 2, {}, () => {
           clients[0].createAddress((err, addr) => {
-            should.not.exist(err);
+            should.not.exist(err,err);
             should.exist(addr);
 
             var storage = new Storage({
@@ -6992,17 +7089,17 @@ describe('client API', function() {
                   should.exist(err);
                   err.should.be.an.instanceOf(Errors.NOT_AUTHORIZED);
                   recoveryClient.recreateWallet(err => {
-                    should.not.exist(err);
+                    should.not.exist(err,err);
                     recoveryClient.recreateWallet(err => {
-                      should.not.exist(err);
+                      should.not.exist(err,err);
                       recoveryClient.getStatus({}, (err, status) => {
-                        should.not.exist(err);
+                        should.not.exist(err,err);
                         _.difference(_.map(status.wallet.copayers, 'name'), [
                           'creator',
                           'copayer 1'
                         ]).length.should.equal(0);
                         recoveryClient.createAddress((err, addr2) => {
-                          should.not.exist(err);
+                          should.not.exist(err,err);
                           should.exist(addr2);
                           addr2.address.should.equal(addr.address);
                           addr2.path.should.equal(addr.path);
@@ -7010,7 +7107,7 @@ describe('client API', function() {
                           var recoveryClient2 = helpers.newClient(newApp);
                           recoveryClient2.fromString(clients[1].toString());
                           recoveryClient2.getStatus({}, (err, status) => {
-                            should.not.exist(err);
+                            should.not.exist(err,err);
                             done();
                           });
                         });
@@ -7048,10 +7145,10 @@ describe('client API', function() {
             network: 'testnet'
           },
           (err, secret) => {
-            should.not.exist(err);
+            should.not.exist(err,err);
 
             clients[0].createAddress((err, addr) => {
-              should.not.exist(err);
+              should.not.exist(err,err);
               should.exist(addr);
 
               var storage = new Storage({
@@ -7078,11 +7175,11 @@ describe('client API', function() {
                     should.exist(err);
                     err.should.be.an.instanceOf(Errors.NOT_AUTHORIZED);
                     recoveryClient.recreateWallet(err => {
-                      should.not.exist(err);
+                      should.not.exist(err,err);
                       recoveryClient.getStatus({}, (err, status) => {
-                        should.not.exist(err);
+                        should.not.exist(err,err);
                         recoveryClient.createAddress((err, addr2) => {
-                          should.not.exist(err);
+                          should.not.exist(err,err);
                           should.exist(addr2);
                           addr2.address.should.equal(addr.address);
                           addr2.path.should.equal(addr.path);
@@ -7142,9 +7239,9 @@ describe('client API', function() {
           network: 'livenet'
         },
         (err, secret) => {
-          should.not.exist(err);
+          should.not.exist(err,err);
           clients[0].createAddress((err, x) => {
-            should.not.exist(err);
+            should.not.exist(err,err);
             address = x.address;
             var importedClient = helpers.newClient(app);
             importedClient.fromString(
@@ -7157,10 +7254,10 @@ describe('client API', function() {
             );
             var spy = sinon.spy(importedClient, 'openWallet');
             importedClient.openWallet(err => {
-              should.not.exist(err);
+              should.not.exist(err,err);
               check(importedClient);
               importedClient.getMainAddresses({}, (err, x) => {
-                should.not.exist(err);
+                should.not.exist(err,err);
                 x[0].address.should.equal(address);
                 done();
               });
@@ -7195,10 +7292,10 @@ describe('client API', function() {
           network: 'testnet'
         },
         err => {
-          should.not.exist(err);
+          should.not.exist(err,err);
           seedSpy.called.should.be.false;
           proxy.getStatus({}, (err, status) => {
-            should.not.exist(err);
+            should.not.exist(err,err);
             status.wallet.name.should.equal('mywallet');
             done();
           });
@@ -7260,9 +7357,9 @@ describe('client API', function() {
                 network: 'testnet'
               },
               err => {
-                should.not.exist(err);
+                should.not.exist(err,err);
                 proxy.createAddress((err, address) => {
-                  should.not.exist(err);
+                  should.not.exist(err,err);
                   should.exist(address.address);
                   blockchainExplorerMock.setUtxo(address, 1, 1);
                   var opts = {
@@ -7303,16 +7400,16 @@ describe('client API', function() {
           },
           (signatures, next) => {
             proxy.getTxProposals({}, (err, txps) => {
-              should.not.exist(err);
+              should.not.exist(err,err);
               var txp = txps[0];
               txp.signatures = signatures;
               async.each(
                 txps,
                 (txp, cb) => {
                   proxy.signTxProposal(txp, (err, txp) => {
-                    should.not.exist(err);
+                    should.not.exist(err,err);
                     proxy.broadcastTxProposal(txp, (err, txp) => {
-                      should.not.exist(err);
+                      should.not.exist(err,err);
                       txp.status.should.equal('broadcasted');
                       should.exist(txp.txid);
                       cb();
@@ -7327,7 +7424,7 @@ describe('client API', function() {
           }
         ],
         err => {
-          should.not.exist(err);
+          should.not.exist(err,err);
           done();
         }
       );
@@ -7355,9 +7452,9 @@ describe('client API', function() {
                 network: 'testnet'
               },
               err => {
-                should.not.exist(err);
+                should.not.exist(err,err);
                 client.createAddress((err, address) => {
-                  should.not.exist(err);
+                  should.not.exist(err,err);
                   should.exist(address.address);
                   blockchainExplorerMock.setUtxo(address, 1, 1);
                   var opts = {
@@ -7397,16 +7494,16 @@ describe('client API', function() {
           },
           (signatures, next) => {
             client.getTxProposals({}, (err, txps) => {
-              should.not.exist(err);
+              should.not.exist(err,err);
               var txp = txps[0];
               txp.signatures = signatures;
               async.each(
                 txps,
                 (txp, cb) => {
                   client.signTxProposal(txp, (err, txp) => {
-                    should.not.exist(err);
+                    should.not.exist(err,err);
                     client.broadcastTxProposal(txp, (err, txp) => {
-                      should.not.exist(err);
+                      should.not.exist(err,err);
                       txp.status.should.equal('broadcasted');
                       should.exist(txp.txid);
                       cb();
@@ -7421,7 +7518,7 @@ describe('client API', function() {
           }
         ],
         err => {
-          should.not.exist(err);
+          should.not.exist(err,err);
           done();
         }
       );
@@ -7454,9 +7551,9 @@ describe('client API', function() {
                   network: 'testnet'
                 },
                 err => {
-                  should.not.exist(err);
+                  should.not.exist(err,err);
                   proxy.createAddress((err, address) => {
-                    should.not.exist(err);
+                    should.not.exist(err,err);
                     should.exist(address.address);
                     blockchainExplorerMock.setUtxo(address, 1, 1);
                     var opts = {
@@ -7475,7 +7572,7 @@ describe('client API', function() {
                   forAirGapped: true
                 },
                 (err, result) => {
-                  should.not.exist(err);
+                  should.not.exist(err,err);
                   bundle = result;
                   next();
                 }
@@ -7483,7 +7580,7 @@ describe('client API', function() {
             }
           ],
           err => {
-            should.not.exist(err);
+            should.not.exist(err,err);
             done();
           }
         );
@@ -7538,7 +7635,7 @@ describe('client API', function() {
 
         helpers.createAndJoinWallet(clients, keys, 1, 1, {}, () => {
           clients[0].createAddress((err, x0) => {
-            should.not.exist(err);
+            should.not.exist(err,err);
             blockchainExplorerMock.setUtxo(x0, 10, 1);
             var c = clients[0].credentials;
 
@@ -7566,9 +7663,9 @@ describe('client API', function() {
             requestPrivKey: clients[0].credentials.requestPrivKey
           }),
           (err, x) => {
-            should.not.exist(err);
+            should.not.exist(err,err);
             helpers.createAndPublishTxProposal(clients[0], opts, (err, x) => {
-              should.not.exist(err);
+              should.not.exist(err,err);
               clients[0].credentials.requestPrivKey.should.be.equal(rk);
               done();
             });
@@ -7584,7 +7681,7 @@ describe('client API', function() {
         });
         opts2.name = 'pepe';
         clients[0].addAccess(opts2, (err, x, key) => {
-          should.not.exist(err);
+          should.not.exist(err,err);
           var url = spy.getCall(0).args[0];
           var body = JSON.stringify(spy.getCall(0).args[1]);
           url.should.contain('/copayers');
@@ -7596,7 +7693,7 @@ describe('client API', function() {
           c.requestPubKey = k.toPublicKey().toString();
 
           clients[0].getStatus({}, (err, status) => {
-            should.not.exist(err);
+            should.not.exist(err,err);
             var keys = status.wallet.copayers[0].requestPubKeys;
             keys.length.should.equal(2);
             _.filter(keys, {
@@ -7604,7 +7701,7 @@ describe('client API', function() {
             }).length.should.equal(1);
 
             helpers.createAndPublishTxProposal(clients[0], opts, (err, x) => {
-              should.not.exist(err);
+              should.not.exist(err,err);
               // TODO: verify tx's creator is 'pepe'
               done();
             });
@@ -7637,7 +7734,7 @@ describe('client API', function() {
           c.requestPrivKey = k.toString();
           c.requestPubKey = k.toPublicKey().toString();
           helpers.createAndPublishTxProposal(clients[0], opts, (err, x) => {
-            should.not.exist(err);
+            should.not.exist(err,err);
             done();
           });
         });
@@ -7650,9 +7747,9 @@ describe('client API', function() {
         });
         clients[0].addAccess(opts2, (err, x) => {
           helpers.createAndPublishTxProposal(clients[0], opts, (err, x) => {
-            should.not.exist(err);
+            should.not.exist(err,err);
             clients[0].getTxProposals({}, (err, txps) => {
-              should.not.exist(err);
+              should.not.exist(err,err);
               done();
             });
           });
@@ -7666,7 +7763,7 @@ describe('client API', function() {
         });
         clients[0].addAccess(opts2, (err, x) => {
           helpers.createAndPublishTxProposal(clients[0], opts, (err, x) => {
-            should.not.exist(err);
+            should.not.exist(err,err);
             helpers.tamperResponse(
               clients[0],
               'get',
@@ -7694,7 +7791,7 @@ describe('client API', function() {
         });
         clients[0].addAccess(opts2, (err, x) => {
           helpers.createAndPublishTxProposal(clients[0], opts, (err, x) => {
-            should.not.exist(err);
+            should.not.exist(err,err);
             helpers.tamperResponse(
               clients[0],
               'get',
@@ -7721,7 +7818,7 @@ describe('client API', function() {
         });
         clients[0].addAccess(opts2, (err, x) => {
           helpers.createAndPublishTxProposal(clients[0], opts, (err, x) => {
-            should.not.exist(err);
+            should.not.exist(err,err);
             helpers.tamperResponse(
               clients[0],
               'get',
@@ -7772,7 +7869,7 @@ describe('client API', function() {
           'passphrase',
           {},
           (err, result) => {
-            should.not.exist(err);
+            should.not.exist(err,err);
             result.should.equal('5KjBgBiadWGhjWmLN1v4kcEZqWSZFqzgv7cSUuZNJg4tD82c4xp');
             done();
           }
@@ -7803,7 +7900,7 @@ describe('client API', function() {
             '5KjBgBiadWGhjWmLN1v4kcEZqWSZFqzgv7cSUuZNJg4tD82c4xp',
             coin,
             (err, balance) => {
-              should.not.exist(err);
+              should.not.exist(err,err);
               balance.should.equal(123 * 1e8);
               done();
             }
@@ -7825,7 +7922,7 @@ describe('client API', function() {
               coin: coin
             },
             (err, tx) => {
-              should.not.exist(err);
+              should.not.exist(err,err);
               should.exist(tx);
               tx.outputs.length.should.equal(1);
               var output = tx.outputs[0];
@@ -8034,7 +8131,7 @@ describe('client API', function() {
             network: 'livenet'
           },
           err => {
-            should.not.exist(err);
+            should.not.exist(err,err);
             var c = client.credentials;
             var importedClient = helpers.newClient(app);
             importedClient.importFromExtendedPublicKey(
@@ -8043,7 +8140,7 @@ describe('client API', function() {
               '1a1f001a1f001a1f001a1f001a1f001a1f001a1f001a1f001a1f001a1f001a1f001a1f001a1f001a1f001a1f001a1f001a1f001a1f001a1f001a1f001a1f001a1f001a1f001a1f001a1f001a1f001a1f001a1f001a1f001a1f001a1f001a1f00',
               {},
               err => {
-                should.not.exist(err);
+                should.not.exist(err,err);
                 var c2 = importedClient.credentials;
                 c2.account.should.equal(0);
                 c2.xPubKey.should.equal(client.credentials.xPubKey);
@@ -8119,21 +8216,21 @@ describe('client API', function() {
     });
     it('should always return same address', done => {
       clients[0].createAddress((err, x) => {
-        should.not.exist(err);
+        should.not.exist(err,err);
         should.exist(x);
         x.path.should.equal('m/0/0');
         clients[0].createAddress((err, y) => {
-          should.not.exist(err);
+          should.not.exist(err,err);
           should.exist(y);
           y.path.should.equal('m/0/0');
           y.address.should.equal(x.address);
           clients[1].createAddress((err, z) => {
-            should.not.exist(err);
+            should.not.exist(err,err);
             should.exist(z);
             z.path.should.equal('m/0/0');
             z.address.should.equal(x.address);
             clients[0].getMainAddresses({}, (err, addr) => {
-              should.not.exist(err);
+              should.not.exist(err,err);
               addr.length.should.equal(1);
               done();
             });
@@ -8143,7 +8240,7 @@ describe('client API', function() {
     });
     it('should reuse address as change address on tx proposal creation', done => {
       clients[0].createAddress((err, address) => {
-        should.not.exist(err);
+        should.not.exist(err,err);
         should.exist(address.address);
         blockchainExplorerMock.setUtxo(address, 2, 1);
 
@@ -8158,7 +8255,7 @@ describe('client API', function() {
           feePerKb: 100e2
         };
         clients[0].createTxProposal(opts, (err, txp) => {
-          should.not.exist(err);
+          should.not.exist(err,err);
           should.exist(txp);
           should.exist(txp.changeAddress);
           txp.changeAddress.address.should.equal(address.address);

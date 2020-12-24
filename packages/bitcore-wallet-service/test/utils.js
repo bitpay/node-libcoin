@@ -80,7 +80,6 @@ describe('Utils', function() {
   });
 
   describe('#formatAmount', function() {
-    it('should successfully format amount', function() {
       var cases = [{
         args: [1, 'bit'],
         expected: '0',
@@ -118,7 +117,6 @@ describe('Utils', function() {
         args: [129900000, 'bch'],
         expected: '1.299',
       }, {
-
         args: [1234567899999, 'btc'],
         expected: '12,345.679',
       }, {
@@ -137,12 +135,35 @@ describe('Utils', function() {
           decimalSeparator: ','
         }],
         expected: '12 345,679',
-      },];
+      }, {
+        args: [1234567890123456789012345678n, 'btc', {
+        }],
+        expected: '12,345,678,901,234,567,890.123457',
+      }, {
+        args: [1234567890123456789012345678n, 'eth', {
+        }],
+        expected: '1,234,567,890.123457',
+      }, {
+        args: [2234567890123456789012n, 'gusd', {
+        }],
+        expected: '22,345,678,901,234,567,890.12',
+      }, {
+        args: [3234567890123456789012n, 'pax', {
+        }],
+        expected: '3,234.56789',
+      }, {
+        args: [4234567890123456789012n, 'usdc', {
+        }],
+        expected: '4,234,567,890,123,456.789012',
+      },
+
+      ];
 
       _.each(cases, function(testCase) {
-        Utils.formatAmount.apply(this, testCase.args).should.equal(testCase.expected);
+        it('should successfully format amount ' + testCase.expected, function() {
+          Utils.formatAmount.apply(this, testCase.args).should.equal(testCase.expected);
+        });
       });
-    });
   });
 
   describe('#getAddressCoin', function() {

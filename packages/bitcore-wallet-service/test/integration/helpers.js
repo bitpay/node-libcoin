@@ -321,7 +321,7 @@ helpers._parseAmount = function(str) {
     confirmations: _.random(6, 100),
   };
 
-  if (_.isNumber(str)) str = str.toString();
+  if (_.isNumber(str) || typeof str == 'bigint') str = str.toString();
 
   var re = /^((?:\d+c)|u)?\s*([\d\.]+)\s*(btc|bit|sat)?$/;
   var match = str.match(re);
@@ -359,10 +359,10 @@ helpers.stubUtxos = function(server, wallet, amounts, opts, cb) {
     amounts = _.isArray(amounts) ? amounts : [amounts];
     blockchainExplorer.getBalance = function(opts, cb) {
       if (opts.tokenAddress) {
-        return cb(null, {unconfirmed:0, confirmed: 2e6, balance: 2e6 });
+        return cb(null, {unconfirmed:0n, confirmed: BigInt(2e6), balance: BigInt(2e6) });
       }
-      let conf =  _.sum(_.map(amounts, x =>  Number((x*1e18).toFixed(0))));
-      return cb(null, {unconfirmed:0, confirmed: conf, balance: conf });
+      let conf =  _.sum(_.map(amounts, x =>  BigInt(x)*BigInt(1e18)));
+      return cb(null, {unconfirmed:0n, confirmed: conf, balance: conf });
     }
     blockchainExplorer.estimateFee = sinon.stub().callsArgWith(1, null, 20000000000);
     return cb();
@@ -370,16 +370,16 @@ helpers.stubUtxos = function(server, wallet, amounts, opts, cb) {
 
   if (wallet.coin == 'eth') {
     amounts = _.isArray(amounts) ? amounts : [amounts];
-    let conf =  _.sum(_.map(amounts, x =>  Number((x*1e18).toFixed(0))));
-    blockchainExplorer.getBalance = sinon.stub().callsArgWith(1, null, {unconfirmed:0, confirmed: conf, balance: conf });
+    let conf =  _.sum(_.map(amounts, x =>  BigInt(x)*BigInt(1e18)));
+    blockchainExplorer.getBalance = sinon.stub().callsArgWith(1, null, {unconfirmed:0n, confirmed: BigInt(conf), balance: BigInt(conf) });
     return cb();
   }
 
   if (wallet.coin == 'xrp') {
     amounts = _.isArray(amounts) ? amounts : [amounts];
-    let conf =  _.sum(_.map(amounts, x =>  Number((x*1e6).toFixed(0))));
+    let conf =  _.sum(_.map(amounts, x =>  BigInt(x)*BigInt(1e6)));
     conf =  conf + Defaults.MIN_XRP_BALANCE;
-    blockchainExplorer.getBalance = sinon.stub().callsArgWith(1, null, {unconfirmed:0, confirmed: conf, balance: conf });
+    blockchainExplorer.getBalance = sinon.stub().callsArgWith(1, null, {unconfirmed:0n,confirmed:  BigInt(conf), balance: BigInt(conf) });
     return cb();
   }
 
@@ -420,7 +420,7 @@ helpers.stubUtxos = function(server, wallet, amounts, opts, cb) {
         return {
           txid: helpers.randomTXID(),
           vout: _.random(0, 10),
-          satoshis: parsed.amount,
+          satoshis: BigInt(parsed.amount),
           scriptPubKey: scriptPubKey.toBuffer().toString('hex'),
           address: address.address,
           confirmations: parsed.confirmations,
@@ -646,8 +646,7 @@ helpers.createAddresses = function(server, wallet, main, change, cb) {
 helpers.createAndPublishTx = function(server, txOpts, signingKey, cb) {
 
   server.createTx(txOpts, function(err, txp) {
-    if (err) console.log(err);
-    should.not.exist(err, "Error creating a TX");
+    if (err) console.log("Error creating TX:", err);
     should.exist(txp,"Error... no txp");
     var publishOpts = helpers.getProposalSignatureOpts(txp, signingKey);
     server.publishTx(publishOpts, function(err) {
@@ -707,6 +706,10 @@ helpers.historyCacheTest = function(items) {
   });
 
   return ret;
+};
+
+helpers.checkBig = function(x,y) {
+  x.toString().should.be.equal(y.toString());
 };
 
 module.exports = helpers;

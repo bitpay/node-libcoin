@@ -251,10 +251,16 @@ export class EmailService {
     if (data.amount) {
       try {
         const unit = recipient.unit.toLowerCase();
-        data.amount = Utils.formatAmount(+data.amount, unit) + ' ' + UNIT_LABELS[unit];
+        data.amount = Utils.formatAmount(BigInt(data.amount), unit) + ' ' + UNIT_LABELS[unit];
       } catch (ex) {
         return cb(new Error('Could not format amount' + ex));
       }
+    }
+
+    // check amount is not 0 (contains any non 0 digit
+    if (data.amount && !data.amount.match(/[123456789]/)) {
+      logger.warn('Formatted amount = 0 ' + data.amount);
+      return cb('formatted amount = 0');
     }
 
     this.storage.fetchWallet(notification.walletId, (err, wallet) => {
@@ -371,7 +377,6 @@ export class EmailService {
 
   sendEmail(notification, cb) {
     cb = cb || function() {};
-
     const emailType = EMAIL_TYPES[notification.type];
     if (!emailType) return cb();
 
@@ -431,6 +436,7 @@ export class EmailService {
                       });
                     },
                     err => {
+                      logger.warn(err);
                       return next();
                     }
                   );

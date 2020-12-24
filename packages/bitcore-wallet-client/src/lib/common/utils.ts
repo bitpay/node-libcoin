@@ -311,6 +311,7 @@ export class Utils {
     if (Constants.UTXO_COINS.includes(coin)) {
       var bitcore = Bitcore_[coin];
 
+      // Bitcore TX does not support bigint
       var t = new bitcore.Transaction();
 
       if (txp.version >= 4) {
@@ -324,21 +325,26 @@ export class Utils {
         'Failed state: addressType not in SCRIPT_TYPES'
       );
 
+      // bitcore-lib need numbers on inputs
+      let inputs = _.map(txp.inputs, function (x)  {
+        return {...x, satoshis: Number(x.satoshis) };
+      });
+
       switch (txp.addressType) {
         case Constants.SCRIPT_TYPES.P2WSH:
         case Constants.SCRIPT_TYPES.P2SH:
-          _.each(txp.inputs, i => {
+          _.each(inputs, i => {
             t.from(i, i.publicKeys, txp.requiredSignatures);
           });
           break;
         case Constants.SCRIPT_TYPES.P2WPKH:
         case Constants.SCRIPT_TYPES.P2PKH:
-          t.from(txp.inputs);
+          t.from(inputs);
           break;
       }
 
       if (txp.toAddress && txp.amount && !txp.outputs) {
-        t.to(txp.toAddress, txp.amount);
+        t.to(txp.toAddress, Number(txp.amount)); // For btc/bch => amount is number.
       } else if (txp.outputs) {
         _.each(txp.outputs, o => {
           $.checkState(
@@ -349,11 +355,11 @@ export class Utils {
             t.addOutput(
               new bitcore.Transaction.Output({
                 script: o.script,
-                satoshis: o.amount
+                satoshis: Number(o.amount)
               })
             );
           } else {
-            t.to(o.toAddress, o.amount);
+            t.to(o.toAddress, Number(o.amount));
           }
         });
       }
@@ -381,14 +387,14 @@ export class Utils {
       var totalInputs = _.reduce(
         txp.inputs,
         (memo, i) => {
-          return +i.satoshis + memo;
+          return Number(i.satoshis) + memo;
         },
         0
       );
       var totalOutputs = _.reduce(
         t.outputs,
         (memo, o) => {
-          return +o.satoshis + memo;
+          return Number(o.satoshis) + memo;
         },
         0
       );
@@ -433,6 +439,7 @@ export class Utils {
         ? 'ERC20'
         : this.getChain(coin);
       for (let index = 0; index < recipients.length; index++) {
+        recipients[index].amount = recipients[index].amount.toString(); // web3 requirement
         const rawTx = Transactions.create({
           ...txp,
           ...recipients[index],
