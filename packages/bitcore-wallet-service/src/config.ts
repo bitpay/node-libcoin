@@ -72,8 +72,9 @@ module.exports = {
     defaultLanguage: 'en',
     defaultUnit: 'btc',
     subjectPrefix: '',
-    pushServerUrl: 'https://fcm.googleapis.com/fcm',
-    authorizationKey: 'You_have_to_put_something_here'
+    pushServerUrl: 'https://fcm.googleapis.com/v1/projects/bitpay-wallet/messages:send',
+    fcmGoogleCredentialsPath: 'path_to_service_account.json', // "replace with path to prod service_account.json",
+    fcmGoogleTestAccessToken: 'test_access_token'
   },
   fiatRateServiceOpts: {
     defaultProvider: 'BitPay',
@@ -141,3 +142,4 @@ module.exports = {
   // //then add:
   // mailer: sgMail,
 };
+
