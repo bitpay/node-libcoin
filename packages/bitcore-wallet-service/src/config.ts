@@ -94,7 +94,45 @@ module.exports = {
     buyCrypto: { simplexPromotion202002: false }
   },
   suspendedChains: [],
-  staticRoot: '/tmp/static'
+  staticRoot: '/tmp/static',
+  serverMessages: [
+    {
+      walletNetwork: 'livenet',
+      version: {},
+      appName: ['copay'],
+      platforms: ['android'],
+      exceptPlatforms: [],
+      message: {
+        title: 'No Longer Supported',
+        body: 'No longer supported, please migrate to Bitpay Wallet, ASAP.',
+        link: 'http://bitpay.com',
+        id: 'copay1',
+        dismissible: true,
+        category: 'critical',
+        app: 'copay',
+        priority: 2
+      }
+    },
+    {
+      walletNetwork: 'livenet',
+      version: {},
+      appName: ['copay'],
+      platforms: [],
+      exceptPlatforms: ['android'],
+      message: [
+        {
+          title: 'Support Ending Soon',
+          body: 'Support ending soon, please migrate to Bitpay Wallet.',
+          link: 'http://bitpay.com',
+          id: 'copay1',
+          dismissible: true,
+          category: 'critical',
+          app: 'copay',
+          priority: 2
+        }
+      ]
+    }
+  ]
   // simplex: {
   //   sandbox: {
   //     apiKey: 'simplex_sandbox_api_key_here',
