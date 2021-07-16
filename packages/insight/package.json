@@ -19,7 +19,8 @@
     "API"
   ],
   "config": {
-    "ionic_sass": "./sass.js"
+    "ionic_sass": "./sass.js",
+    "ionic_webpack": "./config/webpack.config.js"
   },
   "prettier": {
     "singleQuote": true
@@ -30,6 +31,8 @@
     "serve:prod": "npm run clean && npm run build:prod && npm run serve",
     "serve": "serve www",
     "ionic:build": "ionic-app-scripts build",
+    "postionic:build": "npm run hashBuild",
+    "preionic:build": "npm run hashAux",
     "ionic:serve": "ionic-app-scripts serve --port 8200",
     "postinstall": "./node_modules/.bin/webdriver-manager update --gecko false",
     "start": "npm run ionic:serve",
@@ -37,7 +40,9 @@
     "test": "ng test --watch=false --code-coverage --no-progress",
     "fix:prettier": "prettier '{*,**/*}.{js,ts,md,json,css}' --write",
     "fix:tslint": "tslint --type-check --fix --project .",
-    "fix": "npm run fix:tslint && npm run fix:prettier"
+    "fix": "npm run fix:tslint && npm run fix:prettier",
+    "hashAux": "cd ./src/aux && node hash-aux.js",
+    "hashBuild": "cd ./src/aux && node hash-build.js"
   },
   "dependencies": {
     "@angular/common": "5.2.10",
@@ -49,7 +54,8 @@
     "@angular/platform-browser-dynamic": "5.2.10",
     "angular2-moment": "1.7.1",
     "angular2-qrcode": "2.0.1",
-    "bs58": "^4.0.1",
+    "bs58": "4.0.1",
+    "cheerio": "1.0.0-rc.10",
     "ionic-angular": "3.9.2",
     "ionicons": "3.0.0",
     "lodash": "4.17.11",
