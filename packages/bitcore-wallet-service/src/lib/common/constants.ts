@@ -35,7 +35,8 @@ module.exports = {
 
   NETWORKS: {
     LIVENET: 'livenet',
-    TESTNET: 'testnet'
+    TESTNET: 'testnet',
+    REGTEST: 'regtest'
   },
 
   ADDRESS_FORMATS: ['copay', 'cashaddr', 'legacy'],

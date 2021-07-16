@@ -492,8 +492,10 @@ export class API extends EventEmitter {
             return next(new Error('No utxos found'));
 
           var fee = opts.fee || 10000;
-          var amount = _.sumBy(utxos, 'satoshis') - fee;
-          if (amount <= 0) return next(new Errors.INSUFFICIENT_FUNDS());
+          var amountBalance = _.sumBy(utxos, 'satoshis') - fee;
+          var amount = opts.amount || amountBalance;
+          if (amount <= 0 || amountBalance <= 0 || amountBalance < amount)
+            return next(new Errors.INSUFFICIENT_FUNDS());
 
           var tx;
           try {
@@ -602,7 +604,7 @@ export class API extends EventEmitter {
     return (
       _.padEnd(widBase58, 22, '0') +
       walletPrivKey.toWIF() +
-      (network == 'testnet' ? 'T' : 'L') +
+      (network == 'testnet' ? 'T' : network == 'regtest' ? 'R' : 'L') +
       coin
     );
   }
@@ -635,7 +637,12 @@ export class API extends EventEmitter {
         walletId,
         walletPrivKey,
         coin,
-        network: networkChar == 'T' ? 'testnet' : 'livenet'
+        network:
+          networkChar == 'T'
+            ? 'testnet'
+            : networkChar == 'R'
+            ? 'regtest'
+            : 'livenet'
       };
     } catch (ex) {
       throw new Error('Invalid secret');
@@ -828,7 +835,7 @@ export class API extends EventEmitter {
   // */
   getFeeLevels(coin, network, cb) {
     $.checkArgument(coin || _.includes(Constants.COINS, coin));
-    $.checkArgument(network || _.includes(['livenet', 'testnet'], network));
+    $.checkArgument(network || _.includes(Constants.NETWORKS, network));
 
     const chain = Utils.getChain(coin).toLowerCase();
 
@@ -896,7 +903,7 @@ export class API extends EventEmitter {
       return cb(new Error('Invalid coin'));
 
     var network = opts.network || 'livenet';
-    if (!_.includes(['testnet', 'livenet'], network))
+    if (!_.includes(Constants.NETWORKS, network))
       return cb(new Error('Invalid network'));
 
     if (!this.credentials) {
@@ -909,7 +916,9 @@ export class API extends EventEmitter {
 
     if (network != this.credentials.network) {
       return cb(
-        new Error('Existing keys were created for a different network')
+        new Error(
+          `Existing keys were created for a different network. Expected: ${network} - Given: ${this.credentials.network}`
+        )
       );
     }
 
@@ -1966,8 +1975,11 @@ export class API extends EventEmitter {
 
     // TODO TODO TODO
     if (key.slice(0, 4) === 'xprv' || key.slice(0, 4) === 'tprv') {
-      if (key.slice(0, 4) === 'xprv' && txp.network == 'testnet')
-        throw new Error('testnet HD keys must start with tprv');
+      if (
+        key.slice(0, 4) === 'xprv' &&
+        (txp.network == 'testnet' || txp.network === 'regtest')
+      )
+        throw new Error('testnet/regtest HD keys must start with tprv');
       if (key.slice(0, 4) === 'tprv' && txp.network == 'livenet')
         throw new Error('livenet HD keys must start with xprv');
       newClient.seedFromExtendedPrivateKey(key, {

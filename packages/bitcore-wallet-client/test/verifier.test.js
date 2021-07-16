@@ -15,7 +15,7 @@ const aKey = new Key({
 
 describe('Verifier', function() {
   describe('checkAddress', function() {
-    it('should verify a BTC  address', () => {
+    it('should verify a BTC address', () => {
       let cred = aKey.createCredentials(null, { coin: 'btc', network: 'livenet', account: 0, n: 1 });
       cred.addWalletInfo('id', 'name', 1, 1, 'copayer');
 
@@ -26,7 +26,19 @@ describe('Verifier', function() {
       }).should.be.true;
     });
 
-    it('should verify a ETH  address', () => {
+    it('should verify a BTC regtest address', () => {
+      let cred = aKey.createCredentials(null, { coin: 'btc', network: 'regtest', account: 0, n: 1 });
+      cred.addWalletInfo('id', 'name', 1, 1, 'copayer');
+
+      Verifier.checkAddress(cred, {
+        address: 'n1M8ZVQtL7QoFvGMg24D6b2ojWvFXCGpoS',
+        path: 'm/0/0',
+        publicKeys: ['03aaeb52dd7494c361049de67cc680e83ebcbbbdbeb13637d92cd845f70308af5e'],
+        network: 'regtest',
+      }).should.be.true;
+    });
+
+    it('should verify a ETH address', () => {
       let cred = aKey.createCredentials(null, { coin: 'eth', network: 'livenet', account: 0, n: 1 });
       cred.addWalletInfo('id', 'name', 1, 1, 'copayer');
 

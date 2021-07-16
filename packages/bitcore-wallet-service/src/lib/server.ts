@@ -1076,8 +1076,16 @@ export class WalletService {
           return cb(new ClientError('The wallet you are trying to join was created for a different coin'));
         }
 
-        if (wallet.network != xPubKey.network.name) {
-          return cb(new ClientError('The wallet you are trying to join was created for a different network'));
+        if (
+          wallet.network != xPubKey.network.name &&
+          !(wallet.network === 'regtest' && xPubKey.network.name === 'testnet')
+        ) {
+          return cb(
+            new ClientError(
+              `The wallet you are trying to join was created for a different network.
+              -> Pub Key Network: ${xPubKey.network.name} - Wallet Network: ${wallet.network}`
+            )
+          );
         }
 
         // New client trying to join legacy wallet
@@ -1626,7 +1634,7 @@ export class WalletService {
         const A = Bitcore_[wallet.coin].Address;
         let addrObj: { network?: { name?: string } } = {};
         try {
-          addrObj = new A(address);
+          addrObj = new A(address, wallet.network);
         } catch (ex) {
           return cb(null, []);
         }
